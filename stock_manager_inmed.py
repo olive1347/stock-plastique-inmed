@@ -1,7 +1,7 @@
 """
 GestStock INMED — Gestion du Stock Plastique & Consommables
 Lecture intelligente des fichiers de demande Excel avec propagation des désignations vides
-Édition directe en mode tableur (type Excel) et assistant IA Groq
+Édition directe en mode tableur (type Excel) stable et persistant, et assistant IA Groq
 """
 
 import json
@@ -180,12 +180,49 @@ def load_state():
             return []
     return []
 
+def apply_editor_changes(df_original, state_changes):
+    """
+    Applique de force les modifications d'édition de cellule, d'ajout 
+    et de suppression d'un composant de tableur Streamlit sur un DataFrame.
+    """
+    res_df = df_original.copy()
+    
+    # 1. Application des cellules éditées
+    for row_idx_str, edits in state_changes.get("edited_rows", {}).items():
+        row_idx = int(row_idx_str)
+        if row_idx < len(res_df):
+            for col, val in edits.items():
+                res_df.at[row_idx, col] = val
+                
+    # 2. Application des nouvelles lignes insérées
+    for addition in state_changes.get("added_rows", []):
+        new_row = {col: addition.get(col, "") for col in res_df.columns}
+        # Valeurs par défaut pour les colonnes numériques obligatoires
+        if not new_row.get("stock"): 
+            new_row["stock"] = 0
+        if not new_row.get("seuil_alerte"): 
+            new_row["seuil_alerte"] = 10
+        if not new_row.get("categorie"):
+            new_row["categorie"] = "DIVERS"
+        res_df = pd.concat([res_df, pd.DataFrame([new_row])], ignore_index=True)
+        
+    # 3. Application des lignes supprimées
+    deletions = sorted([int(idx) for idx in state_changes.get("deleted_rows", [])], reverse=True)
+    for idx in deletions:
+        if idx < len(res_df):
+            res_df = res_df.drop(res_df.index[idx]).reset_index(drop=True)
+            
+    return res_df
+
 # Initialisation de la session
 if "db_stock" not in st.session_state:
     st.session_state.db_stock = load_state()
 
 if "commandes_attente" not in st.session_state:
     st.session_state.commandes_attente = []
+
+if "editor_version" not in st.session_state:
+    st.session_state.editor_version = 0
 
 # ══════════════════════════════════════════════════════════════
 # INTERFACE GRAPHIQUE STREAMLIT
@@ -345,32 +382,49 @@ elif onglet == "🔑 Espace Administration (Olivier)":
             st.subheader("✏️ Édition instantanée de vos données")
             st.write("Double-cliquez sur n'importe quelle case ci-dessous pour modifier directement le stock, le nom, la catégorie ou la référence. Vous pouvez également cliquer sur la ligne vide du bas pour ajouter manuellement un article.")
             
-            if not st.session_state.db_stock:
-                st.warning("Aucun produit enregistré pour le moment.")
-            else:
-                df_editor = pd.DataFrame(st.session_state.db_stock)
+            # Conversion de la base de données en DataFrame
+            df_editor = pd.DataFrame(st.session_state.db_stock)
+            if df_editor.empty:
+                df_editor = pd.DataFrame(columns=["categorie", "designation", "cdt", "ref_fab", "stock", "seuil_alerte"])
                 
-                # Configuration du tableau interactif éditable
-                edited_df = st.data_editor(
-                    df_editor,
-                    column_config={
-                        "categorie": st.column_config.SelectboxColumn("Catégorie", options=OFFICIAL_CATEGORIES, width="medium"),
-                        "designation": st.column_config.TextColumn("Désignation Produit", required=True, width="large"),
-                        "cdt": st.column_config.TextColumn("Conditionnement", width="medium"),
-                        "ref_fab": st.column_config.TextColumn("Réf Fabricant", width="medium"),
-                        "stock": st.column_config.NumberColumn("Quantité en Stock", min_value=0, required=True),
-                        "seuil_alerte": st.column_config.NumberColumn("Seuil Alerte", min_value=0, required=True),
-                    },
-                    num_rows="dynamic", # Permet d'ajouter ou supprimer des lignes librement !
-                    use_container_width=True
-                )
+            # Clé unique dynamique pour éviter que Streamlit ne réinitialise les modifications 
+            # à chaque rechargement provoqué par le clic sur le bouton de sauvegarde
+            editor_key = f"stock_editor_v{st.session_state.editor_version}"
+            
+            # Configuration du tableau interactif éditable
+            edited_df = st.data_editor(
+                df_editor,
+                column_config={
+                    "categorie": st.column_config.SelectboxColumn("Catégorie", options=OFFICIAL_CATEGORIES, width="medium"),
+                    "designation": st.column_config.TextColumn("Désignation Produit", required=True, width="large"),
+                    "cdt": st.column_config.TextColumn("Conditionnement", width="medium"),
+                    "ref_fab": st.column_config.TextColumn("Réf Fabricant", width="medium"),
+                    "stock": st.column_config.NumberColumn("Quantité en Stock", min_value=0, required=True),
+                    "seuil_alerte": st.column_config.NumberColumn("Seuil Alerte", min_value=0, required=True),
+                },
+                num_rows="dynamic", # Permet d'ajouter ou supprimer des lignes librement !
+                use_container_width=True,
+                key=editor_key
+            )
+            
+            # Sauvegarde manuelle des données éditées
+            if st.button("💾 Enregistrer toutes les modifications du tableau", type="primary", use_container_width=True):
+                # Récupération fine de l'état actuel brut de l'éditeur en session
+                if editor_key in st.session_state:
+                    state_changes = st.session_state[editor_key]
+                    final_df = apply_editor_changes(df_editor, state_changes)
+                else:
+                    final_df = edited_df
                 
-                # Sauvegarde manuelle des données éditées
-                if st.button("💾 Enregistrer toutes les modifications du tableau", type="primary", use_container_width=True):
-                    st.session_state.db_stock = edited_df.to_dict(orient="records")
-                    save_state_to_file()
-                    st.success("✅ Base de données mise à jour et sauvegardée avec succès !")
-                    st.rerun()
+                # Sauvegarde finale en mémoire et sur fichier JSON
+                st.session_state.db_stock = final_df.to_dict(orient="records")
+                save_state_to_file()
+                
+                # Incrémente la version pour détruire l'ancien cache de composants Streamlit
+                st.session_state.editor_version += 1
+                
+                st.success("✅ Base de données mise à jour et sauvegardée avec succès !")
+                st.rerun()
 
         # ─── SOUS-ONGLET 3 : PARSING EXCEL & REINITIALISATION ───
         with adm_tab3:
@@ -386,6 +440,8 @@ elif onglet == "🔑 Espace Administration (Olivier)":
                         if res["success"]:
                             st.session_state.db_stock = res["data"]
                             save_state_to_file()
+                            # Réinitialisation du composant de tableur
+                            st.session_state.editor_version += 1
                             status.update(label="✅ Fichier lu et analysé à 100% sans erreur !", state="complete")
                             st.success(f"Bravo ! {len(res['data'])} articles ont été correctement extraits et importés dans votre inventaire.")
                             st.rerun()
@@ -398,6 +454,8 @@ elif onglet == "🔑 Espace Administration (Olivier)":
             if st.button("🗑️ Effacer tout l'inventaire en cours", type="secondary", use_container_width=True):
                 st.session_state.db_stock = []
                 save_state_to_file()
+                # Réinitialisation du composant de tableur
+                st.session_state.editor_version += 1
                 st.warning("Tout l'inventaire a été remis à zéro.")
                 st.rerun()
                 
