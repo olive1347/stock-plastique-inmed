@@ -7,6 +7,7 @@ Espace de suivi pour le gestionnaire de stock (Olivier) avec persistence et sync
 import json
 import re
 import io
+import unicodedata
 from pathlib import Path
 import pandas as pd
 import openpyxl
@@ -29,36 +30,93 @@ CONFIG = {
 STATE_FILE = "stock_state.json"
 EXCEL_FILE = "Fiche demande labo plastique 2025-2026.xlsx"
 
-# Catalogue de secours (au cas où aucun Excel et aucune sauvegarde n'existent)
+# Catalogue de secours structuré selon vos 10 catégories officielles
 BACKUP_STOCK = [
     {"categorie": "FILTRATION", "designation": "Stéricups GP O.22µm 150 ml", "cdt": "12 dans 1 carton", "ref_fab": "SCGPU01RE", "stock": 15, "seuil_alerte": 3},
     {"categorie": "FILTRATION", "designation": "Stéricups GP O.22µm 250 ml", "cdt": "12 dans 1 carton", "ref_fab": "SCGPU02RE", "stock": 20, "seuil_alerte": 4},
-    {"categorie": "FILTRATION", "designation": "Stéricups GP O.22µm 500 ml", "cdt": "12 dans 1 carton", "ref_fab": "SCGPU05RE", "stock": 18, "seuil_alerte": 4},
+    {"categorie": "HISTO ET ELECTROPHY", "designation": "Flacons bouchons blancs 40ml", "cdt": "100 ds sachet", "ref_fab": "TP30C-013", "stock": 50, "seuil_alerte": 10},
+    {"categorie": "TUBES", "designation": "Microtubes 1.5ml stérile", "cdt": "500 par boite", "ref_fab": "MCT-150-C", "stock": 40, "seuil_alerte": 8},
+    {"categorie": "CULTURE CELLULAIRE", "designation": "Flacons de culture T75 ventilés", "cdt": "5 par sachet", "ref_fab": "430641U", "stock": 25, "seuil_alerte": 5},
+    {"categorie": "POINTES OU TIPS", "designation": "Pointes 200µl avec filtre sterile", "cdt": "96 par boite", "ref_fab": "TF-200-R-S", "stock": 35, "seuil_alerte": 6},
+    {"categorie": "SERINGUES ET AIGUILLES", "designation": "Seringues 3-corps Luer Lock 5ml", "cdt": "100 par boite", "ref_fab": "309649", "stock": 30, "seuil_alerte": 5},
+    {"categorie": "BACTÉRIO", "designation": "Boites de Petri 90mm ventilées", "cdt": "20 par sachet", "ref_fab": "101VR20", "stock": 15, "seuil_alerte": 3},
+    {"categorie": "PCR", "designation": "Plaques de PCR 96 puits blanches", "cdt": "10 par sachet", "ref_fab": "HSP9601", "stock": 12, "seuil_alerte": 2},
+    {"categorie": "DIVERS", "designation": "Parafilm M rouleau 10cm x 38m", "cdt": "Unité", "ref_fab": "PM996", "stock": 8, "seuil_alerte": 2},
+    {"categorie": "PESÉES", "designation": "Coupelle de pesée bleue petite", "cdt": "500 par carton", "ref_fab": "045104", "stock": 20, "seuil_alerte": 4},
 ]
+
+def identify_category(des_str, cdt_str, ref_str):
+    """
+    🔍 ANALYSE ANCRES : Détecte de manière robuste si une désignation correspond à l'une 
+    des 10 catégories officielles (case-insensitive, tolérance aux accents et slashes).
+    """
+    if not des_str:
+        return None
+    
+    # On ignore d'emblée les textes administratifs
+    des_upper = des_str.strip().upper()
+    if any(x in des_upper for x in ["NOM", "PRÉNOM", "PRENOM", "DESTINATION", "DATE", "ÉQUIPE", "EQUIPE", "SIGNATURE", "VISA", "FICHE", "LABO", "PLASTIQUE"]):
+        return None
+
+    # Nettoyage des accents et caractères spéciaux
+    s_no_accent = "".join(c for c in unicodedata.normalize('NFD', des_upper) if unicodedata.category(c) != 'Mn')
+    cleaned_letters = re.sub(r'[^A-Z]', '', s_no_accent)
+
+    # Les en-têtes de catégorie n'ont pas de conditionnement ni de référence fabricant
+    if cdt_str or ref_str:
+        return None
+
+    # Correspondance de filtrage pour les 10 catégories requises
+    if "FILTRATION" in s_no_accent:
+        return "FILTRATION"
+    
+    if "HISTO" in s_no_accent or "ELECTROPHY" in s_no_accent:
+        return "HISTO ET ELECTROPHY"
+        
+    if cleaned_letters == "TUBES" or s_no_accent == "TUBES":
+        return "TUBES"
+        
+    if "CULTURE" in s_no_accent or "CELLULAIRE" in s_no_accent:
+        return "CULTURE CELLULAIRE"
+        
+    if "POINTE" in s_no_accent or "TIP" in s_no_accent:
+        return "POINTES OU TIPS"
+            
+    if "SERINGUE" in s_no_accent or "AIGUILLE" in s_no_accent:
+        return "SERINGUES ET AIGUILLES"
+            
+    if "BACTERIO" in s_no_accent:
+        return "BACTÉRIO"
+        
+    if cleaned_letters == "PCR" or s_no_accent == "PCR":
+        return "PCR"
+        
+    if cleaned_letters == "DIVERS" or s_no_accent == "DIVERS":
+        return "DIVERS"
+        
+    if "PESEE" in s_no_accent or "PESEES" in s_no_accent:
+        return "PESÉES"
+
+    return None
 
 def get_cell_value(ws, row, col):
     """
-    💡 SOLUTION EXPERTE : Lit correctement la valeur d'une cellule, 
+    💡 SOLUTION CELLULES FUSIONNÉES : Lit correctement la valeur d'une cellule, 
     même si elle fait partie d'une zone fusionnée (merged cell) dans Excel.
     """
     cell = ws.cell(row=row, column=col)
     for merged_range in ws.merged_cells.ranges:
         if cell.coordinate in merged_range:
-            # Retourne la valeur de la cellule en haut à gauche de la fusion
             return ws.cell(row=merged_range.min_row, column=merged_range.min_col).value
     return cell.value
 
 def detect_columns(ws):
     """
-    🔍 DÉTECTION DYNAMIQUE : Parcourt les premières lignes de l'Excel pour repérer 
-    les colonnes exactes de désignation, conditionnement, référence et quantité.
+    🔍 DÉTECTION DYNAMIQUE : Repère de façon automatique les colonnes exactes 
+    de désignation, conditionnement, référence et quantité.
     """
-    col_des = 1  # Par défaut Col A (Désignation)
-    col_cdt = 2  # Par défaut Col B (Détail/Conditionnement)
-    col_ref = 3  # Par défaut Col C (Réf Fabricant)
-    col_qty = 8  # Par défaut Col H (Quantité demandée)
+    col_des, col_cdt, col_ref, col_qty = 1, 2, 3, 8
     
-    # Scan des 10 premières lignes
     for r in range(1, 11):
         for c in range(1, 15):
             val = ws.cell(row=r, column=c).value
@@ -66,7 +124,7 @@ def detect_columns(ws):
                 val_upper = val.upper()
                 if "DESIGNATION" in val_upper or "DÉSIGNATION" in val_upper or "ARTICLE" in val_upper:
                     col_des = c
-                elif "CONDITIONNEMENT" in val_upper or "CDT" in val_upper or "CONDITION" in val_upper or "DÉTAIL" in val_upper or "DETAIL" in val_upper:
+                elif "CONDITIONNEMENT" in val_upper or "CDT" in val_upper or "DÉTAIL" in val_upper or "DETAIL" in val_upper:
                     col_cdt = c
                 elif "REF" in val_upper or "RÉF" in val_upper or "CODE" in val_upper or "FABRICANT" in val_upper:
                     col_ref = c
@@ -85,7 +143,6 @@ def save_stock_state(db_stock):
 
 def load_stock_state():
     """Charge le stock depuis la sauvegarde JSON, sinon le construit depuis l'Excel"""
-    # 1. Tenter de charger la sauvegarde JSON existante (contient les stocks réels d'Olivier)
     if Path(STATE_FILE).exists():
         try:
             with open(STATE_FILE, "r", encoding="utf-8") as f:
@@ -95,19 +152,15 @@ def load_stock_state():
         except Exception:
             pass
 
-    # 2. Si aucune sauvegarde n'existe, scanner l'Excel pour construire la base
     if Path(EXCEL_FILE).exists():
         try:
             wb = openpyxl.load_workbook(EXCEL_FILE, data_only=True)
             ws = wb.active
             
-            # Détection des coordonnées de colonnes
             col_des, col_cdt, col_ref, _ = detect_columns(ws)
-            
             catalog = []
-            current_category = "AUTRES"
+            current_category = "DIVERS"
             
-            # Balayage des lignes de l'Excel à partir de la ligne 5
             for r in range(5, ws.max_row + 1):
                 des = get_cell_value(ws, r, col_des)
                 cdt = get_cell_value(ws, r, col_cdt)
@@ -115,49 +168,36 @@ def load_stock_state():
                 
                 if des:
                     des_str = str(des).strip()
+                    cdt_str = str(cdt).strip() if cdt is not None else ""
+                    ref_str = str(ref).strip() if ref is not None else ""
                     
-                    # Nettoyage et formatage du conditionnement
-                    cdt_str = ""
-                    if cdt is not None:
-                        if isinstance(cdt, float) and cdt.is_integer():
-                            cdt_str = str(int(cdt))
-                        else:
-                            cdt_str = str(cdt).strip()
-                            
-                    # Nettoyage de la référence
-                    ref_str = ""
-                    if ref is not None:
-                        ref_str = str(ref).strip()
-                        if ref_str.upper() in ["NONE", "N/A", "NAN", "NULL"]:
-                            ref_str = ""
+                    if ref_str.upper() in ["NONE", "N/A", "NAN", "NULL"]:
+                        ref_str = ""
 
-                    # 💡 DÉTECTION EXPERTE DE CATÉGORIE :
-                    # Une catégorie est caractérisée par une désignation non vide,
-                    # mais un conditionnement (cdt) et une référence totalement vides.
-                    if not cdt_str and not ref_str:
-                        # On ignore les textes d'en-tête de formulaire administratifs
-                        if any(x in des_str.upper() for x in ["NOM", "PRÉNOM", "PRENOM", "DESTINATION", "DATE", "ÉQUIPE", "EQUIPE", "SIGNATURE", "VISA"]):
-                            continue
-                        current_category = des_str
+                    # Détection précise de catégorie officielle
+                    detected_cat = identify_category(des_str, cdt_str, ref_str)
+                    if detected_cat:
+                        current_category = detected_cat
                         continue
                     
-                    # Ajout de l'article au catalogue dynamique
+                    if any(x in des_str.upper() for x in ["SIGNATURE", "VISA", "TOTAL", "OBSERVATION", "COMMENTAIRE"]):
+                        continue
+
                     catalog.append({
                         "categorie": current_category,
                         "designation": des_str,
                         "cdt": cdt_str if cdt_str else "Unité",
                         "ref_fab": ref_str if ref_str else "N/A",
-                        "stock": 50,         # Valeur initiale par défaut
-                        "seuil_alerte": 5    # Seuil d'alerte par défaut
+                        "stock": 50,         
+                        "seuil_alerte": 5    
                     })
             
             if catalog:
                 save_stock_state(catalog)
                 return catalog
         except Exception as e:
-            st.error(f"⚠️ Erreur lors de l'initialisation du catalogue depuis l'Excel : {e}")
+            st.error(f"⚠️ Erreur d'initialisation du catalogue Excel : {e}")
 
-    # 3. En dernier recours, charger la liste de secours brute
     return BACKUP_STOCK.copy()
 
 def parse_excel_demande(file_bytes):
@@ -166,10 +206,8 @@ def parse_excel_demande(file_bytes):
         wb = openpyxl.load_workbook(io.BytesIO(file_bytes), data_only=True)
         ws = wb.active
         
-        # Détection dynamique des colonnes
         col_des, col_cdt, col_ref, col_qty = detect_columns(ws)
         
-        # Extraction intelligente des métadonnées (balayage des 4 premières lignes)
         nom_chercheur = "Non spécifié"
         destination = "Équipe non spécifiée"
         date_demande = datetime.today().strftime("%d/%m/%Y")
@@ -188,13 +226,19 @@ def parse_excel_demande(file_bytes):
         
         articles_demandes = []
         
-        # Lecture des quantités demandées (Colonne de quantité détectée dynamiquement)
         for row in range(5, ws.max_row + 1):
             designation = get_cell_value(ws, row, col_des)
             info = get_cell_value(ws, row, col_cdt)
             qty = get_cell_value(ws, row, col_qty)
+            ref = get_cell_value(ws, row, col_ref)
             
             if designation and qty and isinstance(qty, (int, float)) and qty > 0:
+                # Éviter d'importer les en-têtes de catégories comme articles
+                cdt_str = str(info).strip() if info is not None else ""
+                ref_str = str(ref).strip() if ref is not None else ""
+                if identify_category(str(designation), cdt_str, ref_str):
+                    continue
+                    
                 full_name = f"{designation}"
                 if info:
                     if isinstance(info, float) and info.is_integer():
@@ -219,15 +263,13 @@ def parse_excel_demande(file_bytes):
         return {"success": False, "error": str(e)}
 
 def map_raw_to_db(raw_name):
-    """Tente de mapper intelligemment une saisie utilisateur vers notre base de données"""
+    """Mappe intelligemment une désignation libre vers notre base de données"""
     raw_clean = raw_name.lower().strip()
     
-    # Recherche exacte ou partielle dans la base de données réelle de l'application
     for item in st.session_state.db_stock:
         db_des = item["designation"].lower().strip()
         if raw_clean in db_des or db_des in raw_clean:
             return item["designation"]
-            
     return None
 
 if "db_stock" not in st.session_state:
@@ -240,7 +282,20 @@ if "chat_history" not in st.session_state:
     st.session_state.chat_history = []
 
 def get_dynamic_system_prompt():
-    produits_puces = "\n".join([f"- \"{item['designation']}\"" for item in st.session_state.db_stock])
+    # Groupe sémantiquement les articles par catégorie pour éclairer l'IA
+    catalog_by_cat = {}
+    for item in st.session_state.db_stock:
+        cat = item["categorie"]
+        if cat not in catalog_by_cat:
+            catalog_by_cat[cat] = []
+        catalog_by_cat[cat].append(item["designation"])
+    
+    produits_puces = ""
+    for cat, items in catalog_by_cat.items():
+        produits_puces += f"\n--- Catégorie : {cat} ---\n"
+        for item in items:
+            produits_puces += f"- \"{item}\"\n"
+
     return f"""Tu es l'assistant intelligent du stock plastique de l'INMED.
 Ton rôle est d'analyser les demandes des chercheurs rédigées en langage naturel pour en extraire les articles commandés.
 
@@ -260,7 +315,7 @@ Quand l'utilisateur s'adresse à toi pour commander, identifie les produits corr
 
 Si l'utilisateur demande quelque chose qui n'est pas dans le catalogue, réponds simplement avec un message poli expliquant que le produit n'est pas répertorié.
 
-Voici la liste des produits autorisés dans la base (respecte la désignation exacte) :
+Voici le catalogue de produits autorisés (classés par catégorie) :
 {produits_puces}
 """
 
@@ -281,10 +336,10 @@ if onglet == "👋 Espace Chercheurs (Demandes)":
         "📋 Voir le catalogue disponible"
     ])
     
-    # --- OPTION 1 : GLISSER-DÉPOSER LE FICHIER EXCEL ---
+    # --- ONGLET 1 : DÉPÔT EXCEL ---
     with tab1:
         st.subheader("Importation de votre Fiche Excel")
-        st.write("Glissez-déposez simplement votre fichier `Fiche demande labo plastique 2025-2026.xlsx` rempli ci-dessous.")
+        st.write("Glissez-déposez simplement votre fichier `Fiche demande labo plastique` rempli ci-dessous.")
         
         uploaded_file = st.file_uploader("Choisissez un fichier Excel (.xlsx)", type=["xlsx"])
         
@@ -337,15 +392,16 @@ if onglet == "👋 Espace Chercheurs (Demandes)":
                                 "statut": "En attente"
                             })
                             st.balloons()
-                            st.success("✅ Votre commande a bien été enregistrée et transmise à Olivier. Vous pouvez aller récupérer vos consommables !")
+                            st.success("✅ Votre commande a bien été enregistrée et transmise à Olivier.")
                     else:
-                        st.warning("Aucun article avec une quantité demandée supérieure à 0 n'a été détecté dans votre fichier Excel.")
+                        st.warning("Aucun article avec une quantité demandée supérieure à 0 n'a été détecté.")
                 else:
                     st.error(f"Impossible de lire le fichier Excel : {result['error']}")
 
+    # --- ONGLET 2 : ASSISTANT IA ---
     with tab2:
         st.subheader("Commandez en parlant naturellement à l'IA")
-        st.write("Exemple : *'Salut Olivier (via l'IA), j'aurais besoin de 2 boîtes de stéricups 250ml et un scotch rouge pour l'équipe Neuro s'il te plaît'*")
+        st.write("Exemple : *'Salut Olivier, j'aurais besoin de 2 stéricups 250ml et un scotch rouge pour l'équipe Neuro'*")
         
         for chat in st.session_state.chat_history:
             with st.chat_message(chat["role"]):
@@ -407,12 +463,12 @@ if onglet == "👋 Espace Chercheurs (Demandes)":
                         st.error(f"Erreur technique de l'assistant IA : {e}")
             st.rerun()
 
+    # --- ONGLET 3 : CATALOGUE PUBLIC ---
     with tab3:
         st.subheader("📋 Consommables Plastiques Disponibles")
         df_catalogue = pd.DataFrame(st.session_state.db_stock)
         df_public = df_catalogue[["categorie", "designation", "cdt", "ref_fab"]].copy()
         
-        # Filtre de recherche par catégorie
         categories_liste = ["Toutes"] + list(df_public["categorie"].unique())
         selected_cat = st.selectbox("Filtrer par catégorie :", categories_liste)
         
@@ -435,6 +491,7 @@ elif onglet == "🔑 Espace Olivier (Gestionnaire)":
             "⚙️ Outils d'inventaire"
         ])
         
+        # --- ADMINISTRATION 1 : PRÉPARATION DES COMMANDES ---
         with adm_tab1:
             st.subheader("📋 Commandes reçues à préparer")
             
@@ -455,7 +512,6 @@ elif onglet == "🔑 Espace Olivier (Gestionnaire)":
                                 error_stock = False
                                 error_msg = ""
                                 
-                                # Vérification préliminaire des quantités
                                 for order_item in cmd["items"]:
                                     item_db = next((item for item in st.session_state.db_stock if item["designation"] == order_item["designation"]), None)
                                     if item_db:
@@ -466,7 +522,6 @@ elif onglet == "🔑 Espace Olivier (Gestionnaire)":
                                 if error_stock:
                                     st.error(f"Impossible de valider la commande : {error_msg}")
                                 else:
-                                    # Déduction finale des stocks et sauvegarde de l'état
                                     for order_item in cmd["items"]:
                                         item_db = next((item for item in st.session_state.db_stock if item["designation"] == order_item["designation"]), None)
                                         if item_db:
@@ -482,10 +537,10 @@ elif onglet == "🔑 Espace Olivier (Gestionnaire)":
                                 st.warning("La commande a été marquée comme annulée.")
                                 st.rerun()
 
+        # --- ADMINISTRATION 2 : VUE DU STOCK ET RECHERCHE ---
         with adm_tab2:
             st.subheader("📊 Tableau de bord d'inventaire")
             
-            # Recherche rapide
             recherche = st.text_input("Rechercher un produit, catégorie ou référence :")
             
             stock_data = []
@@ -508,7 +563,6 @@ elif onglet == "🔑 Espace Olivier (Gestionnaire)":
                 
             df_stock_adm = pd.DataFrame(stock_data)
             
-            # Application de la recherche
             if recherche:
                 df_stock_adm = df_stock_adm[
                     df_stock_adm["Désignation"].str.contains(recherche, case=False, na=False) |
@@ -518,6 +572,7 @@ elif onglet == "🔑 Espace Olivier (Gestionnaire)":
                 
             st.dataframe(df_stock_adm, use_container_width=True)
 
+        # --- ADMINISTRATION 3 : OUTILS, AJUSTEMENTS & SYNCHRO ---
         with adm_tab3:
             st.subheader("⚙️ Ajustements & Exportations rapides")
             
@@ -541,7 +596,7 @@ elif onglet == "🔑 Espace Olivier (Gestionnaire)":
             
             with col_ajust2:
                 st.write("**Ajouter une nouvelle référence manuellement :**")
-                n_cat = st.text_input("Catégorie :", placeholder="ex: HISTO / ELECTROPHY")
+                n_cat = st.text_input("Catégorie :", placeholder="ex: HISTO ET ELECTROPHY")
                 n_des = st.text_input("Désignation de l'article :", placeholder="ex: Tubes Eppendorf stérile 1.5ml")
                 n_cdt = st.text_input("Conditionnement :", placeholder="ex: 500 par boîte")
                 n_ref = st.text_input("Référence Fabricant :", placeholder="ex: EP15-ST")
@@ -566,7 +621,6 @@ elif onglet == "🔑 Espace Olivier (Gestionnaire)":
 
             st.write("---")
             
-            # Force de synchronisation dynamique depuis le fichier Excel
             st.write("**🔄 Synchroniser l'application avec l'Excel de GitHub :**")
             st.info("Cette action va re-scanner le fichier Excel officiel pour y chercher des nouveautés tout en préservant vos stocks actuels.")
             if st.button("⚙️ Lancer la synchronisation Excel", use_container_width=True):
@@ -577,7 +631,7 @@ elif onglet == "🔑 Espace Olivier (Gestionnaire)":
                         col_des, col_cdt, col_ref, _ = detect_columns(ws)
                         
                         updated_catalog = []
-                        current_category = "AUTRES"
+                        current_category = "DIVERS"
                         for r in range(5, ws.max_row + 1):
                             des = get_cell_value(ws, r, col_des)
                             cdt = get_cell_value(ws, r, col_cdt)
@@ -585,30 +639,21 @@ elif onglet == "🔑 Espace Olivier (Gestionnaire)":
                             
                             if des:
                                 des_str = str(des).strip()
+                                cdt_str = str(cdt).strip() if cdt is not None else ""
+                                ref_str = str(ref).strip() if ref is not None else ""
                                 
-                                cdt_str = ""
-                                if cdt is not None:
-                                    if isinstance(cdt, float) and cdt.is_integer():
-                                        cdt_str = str(int(cdt))
-                                    else:
-                                        cdt_str = str(cdt).strip()
-                                        
-                                ref_str = ""
-                                if ref is not None:
-                                    ref_str = str(ref).strip()
-                                    if ref_str.upper() in ["NONE", "N/A", "NAN", "NULL"]:
-                                        ref_str = ""
+                                if ref_str.upper() in ["NONE", "N/A", "NAN", "NULL"]:
+                                    ref_str = ""
                                 
-                                # 💡 DÉTECTION EXPERTE ET ULTRA-PRÉCISE :
-                                # Les catégories sont dorénavant détectées de manière purement logique :
-                                # S'il y a un nom mais pas de conditionnement et pas de référence, c'est une catégorie !
-                                if not cdt_str and not ref_str:
-                                    if any(x in des_str.upper() for x in ["NOM", "PRENOM", "DESTINATION", "DATE", "EQUIPE", "SIGNATURE", "VISA"]):
-                                        continue
-                                    current_category = des_str
+                                # Détection sémantique stricte des 10 catégories
+                                detected_cat = identify_category(des_str, cdt_str, ref_str)
+                                if detected_cat:
+                                    current_category = detected_cat
                                     continue
                                 
-                                # Recherche de correspondance de stock existant
+                                if any(x in des_str.upper() for x in ["SIGNATURE", "VISA", "TOTAL", "OBSERVATION", "COMMENTAIRE"]):
+                                    continue
+                                
                                 matched_item = next((item for item in st.session_state.db_stock if item["designation"] == des_str), None)
                                 current_stock_level = matched_item["stock"] if matched_item else 50
                                 current_seuil_level = matched_item["seuil_alerte"] if matched_item else 5
@@ -633,7 +678,6 @@ elif onglet == "🔑 Espace Olivier (Gestionnaire)":
             
             st.write("---")
             
-            # Exportation Excel pour inventaire
             st.write("**Exporter l'inventaire complet :**")
             df_export = pd.DataFrame(st.session_state.db_stock)
             
