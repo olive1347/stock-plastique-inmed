@@ -19,20 +19,20 @@ def identify_category(des_str, cdt, ref):
     if cdt or ref: return None
     clean_des = clean_text(des_str)
     official_cats = {
-        "filtration": ["filtration"],
-        "histo et electrophy": ["histo", "electrophy"],
-        "tubes": ["tubes"],
-        "culture cellulaire": ["culture", "cellulaire"],
-        "pointes ou tips": ["pointe", "tip"],
-        "seringues et aiguilles": ["seringue", "aiguille"],
-        "bactério": ["bacterio"],
-        "pcr": ["pcr"],
-        "divers": ["divers"],
-        "pesées": ["pesee", "pesees"]
+        "FILTRATION": ["filtration"],
+        "HISTO ET ELECTROPHY": ["histo", "electrophy"],
+        "TUBES": ["tubes"],
+        "CULTURE CELLULAIRE": ["culture", "cellulaire"],
+        "POINTES OU TIPS": ["pointe", "tip"],
+        "SERINGUES ET AIGUILLES": ["seringue", "aiguille"],
+        "BACTÉRIO": ["bacterio"],
+        "PCR": ["pcr"],
+        "DIVERS": ["divers"],
+        "PESÉES": ["pesee", "pesees"]
     }
     for cat_name, keywords in official_cats.items():
         if any(k in clean_des for k in keywords):
-            return cat_name.upper()
+            return cat_name
     return None
 
 def get_cell_value(ws, row, col):
@@ -42,6 +42,7 @@ def get_cell_value(ws, row, col):
             return ws.cell(row=merged_range.min_row, column=merged_range.min_col).value
     return cell.value
 
+# --- INITIALISATION ---
 st.set_page_config(page_title="GestStock INMED", page_icon="🧪", layout="wide")
 
 if "db_stock" not in st.session_state:
@@ -53,49 +54,41 @@ if "db_stock" not in st.session_state:
 
 st.title("🧪 GestStock INMED")
 
-# Définition des onglets
+# --- NAVIGATION ---
 tabs = st.tabs(["📋 Stock Actuel", "📦 Faire une demande", "⚙️ Administration"])
 
-# Onglet 1: Visualisation
+# ONGLET 1: STOCK
 with tabs[0]:
     st.write("### Inventaire disponible")
     if not st.session_state.db_stock:
-        st.warning("Aucune donnée disponible. Allez dans l'onglet Administration pour synchroniser.")
+        st.warning("Aucune donnée. Allez dans l'onglet Administration pour synchroniser.")
     else:
         st.dataframe(st.session_state.db_stock)
 
-# Onglet 2: Demandes (Logique simplifiée pour l'exemple)
+# ONGLET 2: DEMANDES
 with tabs[1]:
     st.write("### Faire une demande")
-    st.info("Module de demande en cours de configuration.")
+    st.write("Sélectionnez les articles depuis l'inventaire pour générer votre bon.")
 
-# Onglet 3: Administration
+# ONGLET 3: ADMINISTRATION
 with tabs[2]:
     st.write("### Espace Administration")
-    st.write("**🔄 Synchroniser l'application avec l'Excel :**")
-
     if st.button("⚙️ Lancer la synchronisation Excel", use_container_width=True):
         if not Path(EXCEL_FILE).exists():
-            st.error(f"Fichier {EXCEL_FILE} introuvable sur le serveur.")
+            st.error(f"Fichier {EXCEL_FILE} introuvable.")
         else:
             with st.status("Synchronisation en cours...", expanded=True) as status:
                 try:
-                    st.write("Chargement du fichier Excel...")
                     wb = openpyxl.load_workbook(EXCEL_FILE, data_only=True)
                     ws = wb.active
-                    
-                    col_des, col_cdt, col_ref = 1, 2, 3
-                    
-                    st.write("Analyse des lignes...")
                     new_catalog = []
                     current_cat = "DIVERS"
                     
                     for r in range(5, ws.max_row + 1):
-                        des = get_cell_value(ws, r, col_des)
+                        des = get_cell_value(ws, r, 1) # Col A
                         if not des: continue
-                        
-                        cdt = get_cell_value(ws, r, col_cdt)
-                        ref = get_cell_value(ws, r, col_ref)
+                        cdt = get_cell_value(ws, r, 3) # Col C (Cdt)
+                        ref = get_cell_value(ws, r, 5) # Col E (Ref)
                         
                         cat = identify_category(des, cdt, ref)
                         if cat:
@@ -116,5 +109,4 @@ with tabs[2]:
                     status.update(label="Synchronisation terminée !", state="complete")
                     st.rerun()
                 except Exception as e:
-                    status.update(label="Erreur lors de la synchronisation", state="error")
-                    st.error(f"Détails : {e}")
+                    st.error(f"Erreur : {e}")
