@@ -1,8 +1,3 @@
-"""
-GestStock INMED — Gestion du Stock Plastique & Consommables
-Version corrigée avec retour visuel de synchronisation
-"""
-
 import json
 import re
 import unicodedata
@@ -23,7 +18,6 @@ def clean_text(text):
 def identify_category(des_str, cdt, ref):
     if cdt or ref: return None
     clean_des = clean_text(des_str)
-    # Liste officielle des catégories
     official_cats = {
         "filtration": ["filtration"],
         "histo et electrophy": ["histo", "electrophy"],
@@ -57,53 +51,70 @@ if "db_stock" not in st.session_state:
     else:
         st.session_state.db_stock = []
 
-# --- INTERFACE ADMIN ---
-# (Simulé ici pour la structure, assurez-vous de placer ceci dans votre logique d'onglet)
-st.write("### Espace Administration")
-st.write("**🔄 Synchroniser l'application avec l'Excel :**")
+st.title("🧪 GestStock INMED")
 
-if st.button("⚙️ Lancer la synchronisation Excel", use_container_width=True):
-    if not Path(EXCEL_FILE).exists():
-        st.error(f"Fichier {EXCEL_FILE} introuvable sur le serveur.")
+# Définition des onglets
+tabs = st.tabs(["📋 Stock Actuel", "📦 Faire une demande", "⚙️ Administration"])
+
+# Onglet 1: Visualisation
+with tabs[0]:
+    st.write("### Inventaire disponible")
+    if not st.session_state.db_stock:
+        st.warning("Aucune donnée disponible. Allez dans l'onglet Administration pour synchroniser.")
     else:
-        with st.status("Synchronisation en cours...", expanded=True) as status:
-            try:
-                st.write("Chargement du fichier Excel...")
-                wb = openpyxl.load_workbook(EXCEL_FILE, data_only=True)
-                ws = wb.active
-                
-                # Détection colonne (simplifiée)
-                col_des, col_cdt, col_ref = 1, 2, 3
-                
-                st.write("Analyse des lignes...")
-                new_catalog = []
-                current_cat = "DIVERS"
-                
-                for r in range(5, ws.max_row + 1):
-                    des = get_cell_value(ws, r, col_des)
-                    if not des: continue
+        st.dataframe(st.session_state.db_stock)
+
+# Onglet 2: Demandes (Logique simplifiée pour l'exemple)
+with tabs[1]:
+    st.write("### Faire une demande")
+    st.info("Module de demande en cours de configuration.")
+
+# Onglet 3: Administration
+with tabs[2]:
+    st.write("### Espace Administration")
+    st.write("**🔄 Synchroniser l'application avec l'Excel :**")
+
+    if st.button("⚙️ Lancer la synchronisation Excel", use_container_width=True):
+        if not Path(EXCEL_FILE).exists():
+            st.error(f"Fichier {EXCEL_FILE} introuvable sur le serveur.")
+        else:
+            with st.status("Synchronisation en cours...", expanded=True) as status:
+                try:
+                    st.write("Chargement du fichier Excel...")
+                    wb = openpyxl.load_workbook(EXCEL_FILE, data_only=True)
+                    ws = wb.active
                     
-                    cdt = get_cell_value(ws, r, col_cdt)
-                    ref = get_cell_value(ws, r, col_ref)
+                    col_des, col_cdt, col_ref = 1, 2, 3
                     
-                    cat = identify_category(des, cdt, ref)
-                    if cat:
-                        current_cat = cat
-                        continue
+                    st.write("Analyse des lignes...")
+                    new_catalog = []
+                    current_cat = "DIVERS"
                     
-                    new_catalog.append({
-                        "categorie": current_cat,
-                        "designation": str(des).strip(),
-                        "cdt": str(cdt).strip() if cdt else "Unité",
-                        "ref_fab": str(ref).strip() if ref else "N/A"
-                    })
-                
-                st.session_state.db_stock = new_catalog
-                with open(STATE_FILE, "w", encoding="utf-8") as f:
-                    json.dump(new_catalog, f, ensure_ascii=False, indent=4)
-                
-                status.update(label="Synchronisation terminée !", state="complete")
-                st.rerun()
-            except Exception as e:
-                status.update(label="Erreur lors de la synchronisation", state="error")
-                st.error(f"Détails : {e}")
+                    for r in range(5, ws.max_row + 1):
+                        des = get_cell_value(ws, r, col_des)
+                        if not des: continue
+                        
+                        cdt = get_cell_value(ws, r, col_cdt)
+                        ref = get_cell_value(ws, r, col_ref)
+                        
+                        cat = identify_category(des, cdt, ref)
+                        if cat:
+                            current_cat = cat
+                            continue
+                        
+                        new_catalog.append({
+                            "categorie": current_cat,
+                            "designation": str(des).strip(),
+                            "cdt": str(cdt).strip() if cdt else "Unité",
+                            "ref_fab": str(ref).strip() if ref else "N/A"
+                        })
+                    
+                    st.session_state.db_stock = new_catalog
+                    with open(STATE_FILE, "w", encoding="utf-8") as f:
+                        json.dump(new_catalog, f, ensure_ascii=False, indent=4)
+                    
+                    status.update(label="Synchronisation terminée !", state="complete")
+                    st.rerun()
+                except Exception as e:
+                    status.update(label="Erreur lors de la synchronisation", state="error")
+                    st.error(f"Détails : {e}")
