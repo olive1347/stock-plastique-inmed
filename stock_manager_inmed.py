@@ -1,29 +1,20 @@
 """
-GestStock INMED — Assistant IA & Tableau de bord de Gestion de Stock Plastique
-Gère les consommables (seringues, aiguilles, cônes, flacons...) de l'institut.
-Fournit une interface pour Olivier (Gestionnaire) et pour les chercheurs (Demandes).
+GestStock INMED — Gestion du Stock Plastique & Consommables
+Analyse automatique des fichiers de demande Excel + Assistant IA (Groq Cloud API)
+Espace de suivi pour le gestionnaire de stock (Olivier)
 """
 
 import json
 import re
-import shutil
-import openpyxl
-from datetime import datetime
-from pathlib import Path
-import streamlit as st
+import io
 import pandas as pd
+import openpyxl
 import requests
-
-# Configuration de la page Streamlit
-st.set_page_config(
-    page_title="GestStock INMED - Consommables",
-    page_icon="🧪",
-    layout="wide",
-    initial_sidebar_state="expanded"
-)
+import streamlit as st
+from datetime import datetime
 
 # ══════════════════════════════════════════════════════════════
-# CONFIGURATION ET SECRETS SÉCURISÉS
+# 1. CONFIGURATION ET SECRETS
 # ══════════════════════════════════════════════════════════════
 try:
     groq_key = st.secrets.get("GROQ_API_KEY", st.secrets.get("groq_api_key", ""))
@@ -33,413 +24,469 @@ except Exception:
 CONFIG = {
     "groq_api_key": groq_key,
     "groq_url"    : "https://api.groq.com/openai/v1/chat/completions",
-    "model"       : "llama-3.1-8b-instant"
+    "model"       : "llama-3.1-8b-instant",
+    "admin_pass"  : "inmed2026", # Mot de passe simple pour l'espace d'Olivier
 }
 
-STOCK_EXCEL_FILE = "stock_plastique_inmed.xlsx"
-ORDERS_LOG_FILE = "historique_preparations.json"
-
-# Liste par défaut des consommables pour initialiser l'inventaire si inexistant
-DEFAULT_STOCK = [
-    {"ID": "SER5", "Categorie": "Seringues", "Designation": "Seringue BD 5ml (Boite de 100)", "Stock_Actuel": 12, "Seuil_Alerte": 3, "Emplacement": "Armoire A - Étagère 1"},
-    {"ID": "SER10", "Categorie": "Seringues", "Designation": "Seringue BD 10ml (Boite de 100)", "Stock_Actuel": 8, "Seuil_Alerte": 2, "Emplacement": "Armoire A - Étagère 1"},
-    {"ID": "SER20", "Categorie": "Seringues", "Designation": "Seringue BD 20ml (Boite de 120)", "Stock_Actuel": 5, "Seuil_Alerte": 2, "Emplacement": "Armoire A - Étagère 2"},
-    {"ID": "AIG21G", "Categorie": "Aiguilles", "Designation": "Aiguille Verte 21G (0.8x120mm) (Bte 100)", "Stock_Actuel": 15, "Seuil_Alerte": 4, "Emplacement": "Armoire A - Tiroir Bas"},
-    {"ID": "AIG22G", "Categorie": "Aiguilles", "Designation": "Aiguille Noire 22G (0.7x30mm) (Bte 100)", "Stock_Actuel": 10, "Seuil_Alerte": 3, "Emplacement": "Armoire A - Tiroir Bas"},
-    {"ID": "CONE1000", "Categorie": "Cones Pipettes", "Designation": "Cône Bleu 100-1000µl (Racks de 96)", "Stock_Actuel": 45, "Seuil_Alerte": 10, "Emplacement": "Armoire B - Étagère 1"},
-    {"ID": "CONE200", "Categorie": "Cones Pipettes", "Designation": "Cône Jaune 10-200µl (Racks de 96)", "Stock_Actuel": 38, "Seuil_Alerte": 10, "Emplacement": "Armoire B - Étagère 2"},
-    {"ID": "CONE10", "Categorie": "Cones Pipettes", "Designation": "Cône Blanc 0.1-10µl (Racks de 96)", "Stock_Actuel": 20, "Seuil_Alerte": 5, "Emplacement": "Armoire B - Étagère 2"},
-    {"ID": "FAL15", "Categorie": "Tubes Falcon", "Designation": "Falcon 15ml stérile (Sachet de 50)", "Stock_Actuel": 24, "Seuil_Alerte": 6, "Emplacement": "Armoire C - Étagère 1"},
-    {"ID": "FAL50", "Categorie": "Tubes Falcon", "Designation": "Falcon 50ml stérile (Sachet de 25)", "Stock_Actuel": 30, "Seuil_Alerte": 8, "Emplacement": "Armoire C - Étagère 2"},
-    {"ID": "EPP15", "Categorie": "Microtubes", "Designation": "Eppendorf 1.5ml (Sachet de 500)", "Stock_Actuel": 18, "Seuil_Alerte": 5, "Emplacement": "Armoire C - Étagère 3"},
-    {"ID": "EPP2", "Categorie": "Microtubes", "Designation": "Eppendorf 2ml (Sachet de 500)", "Stock_Actuel": 14, "Seuil_Alerte": 4, "Emplacement": "Armoire C - Étagère 3"},
-    {"ID": "PETRI90", "Categorie": "Culture", "Designation": "Boite de Pétri 90mm (Sachet de 20)", "Stock_Actuel": 25, "Seuil_Alerte": 5, "Emplacement": "Armoire D - Secteur Stérile"},
+# ══════════════════════════════════════════════════════════════
+# 2. BASE DE DONNÉES DES ARTICLES (Issue de votre fichier Excel)
+# ══════════════════════════════════════════════════════════════
+INITIAL_STOCK = [
+    # --- FILTRATION ---
+    {"categorie": "FILTRATION", "designation": "Stéricups GP O.22µm 150 ml", "cdt": "12 dans 1 carton", "ref_fab": "SCGPU01RE", "stock": 15, "seuil_alerte": 3},
+    {"categorie": "FILTRATION", "designation": "Stéricups GP O.22µm 250 ml", "cdt": "12 dans 1 carton", "ref_fab": "SCGPU02RE", "stock": 20, "seuil_alerte": 4},
+    {"categorie": "FILTRATION", "designation": "Stéricups GP O.22µm 500 ml", "cdt": "12 dans 1 carton", "ref_fab": "SCGPU05RE", "stock": 18, "seuil_alerte": 4},
+    {"categorie": "FILTRATION", "designation": "Filtres seringue GP 33 mm, 0,22 µm", "cdt": "50 dans 1 boite", "ref_fab": "SLGP033RS", "stock": 30, "seuil_alerte": 5},
+    {"categorie": "FILTRATION", "designation": "Filtres seringue GV 13 mm, 0,2 µm", "cdt": "100 dans 1 sachet", "ref_fab": "SLGVX13NL", "stock": 25, "seuil_alerte": 5},
+    {"categorie": "FILTRATION", "designation": "Filtres seringue HA 33mm, 0,45µm", "cdt": "Unité", "ref_fab": "SLHA033S6", "stock": 40, "seuil_alerte": 10},
+    
+    # --- HISTO ET ELECTROPHY ---
+    {"categorie": "HISTO / ELECTROPHY", "designation": "Flacons bouchons blancs 40ml", "cdt": "100 ds sachet", "ref_fab": "TP30C-013", "stock": 50, "seuil_alerte": 10},
+    {"categorie": "HISTO / ELECTROPHY", "designation": "Flacons bouchons rouges 125ml", "cdt": "Unité", "ref_fab": "TP52C-023", "stock": 60, "seuil_alerte": 12},
+    
+    # --- SCOTCH ---
+    {"categorie": "SCOTCH", "designation": "Scotch couleur rouge", "cdt": "16 rouleaux/boite", "ref_fab": "clearline", "stock": 12, "seuil_alerte": 3},
+    {"categorie": "SCOTCH", "designation": "Scotch couleur Bleu", "cdt": "16 rouleaux/boite", "ref_fab": "1889385", "stock": 8, "seuil_alerte": 2},
+    {"categorie": "SCOTCH", "designation": "Scotch couleur jaune", "cdt": "16 rouleaux/boite", "ref_fab": "clearline", "stock": 10, "seuil_alerte": 2},
+    {"categorie": "SCOTCH", "designation": "Scotch couleur blanc", "cdt": "16 rouleaux/boite", "ref_fab": "1889375", "stock": 14, "seuil_alerte": 3},
+    
+    # --- PESÉE ---
+    {"categorie": "PESEE", "designation": "Coupelle de pesée bleue petite", "cdt": "500 par carton", "ref_fab": "045104", "stock": 8, "seuil_alerte": 2},
+    {"categorie": "PESEE", "designation": "Coupelle de pesée bleue moyenne", "cdt": "500 par carton", "ref_fab": "045106", "stock": 10, "seuil_alerte": 2},
+    {"categorie": "PESEE", "designation": "Coupelle de pesée bleue grande", "cdt": "500 par carton", "ref_fab": "045108", "stock": 7, "seuil_alerte": 1},
+    {"categorie": "PESEE", "designation": "Coupelle de pesée blanche 40x40 petite", "cdt": "500 par carton", "ref_fab": "HS1420AA", "stock": 15, "seuil_alerte": 3},
 ]
 
-def init_databases():
-    """Initialise le fichier Excel de stock et l'historique JSON s'ils n'existent pas."""
-    # Base Excel de stock
-    if not Path(STOCK_EXCEL_FILE).exists():
-        wb = openpyxl.Workbook()
-        ws = wb.active
-        ws.title = "Stock"
-        headers = ["ID", "Categorie", "Designation", "Stock_Actuel", "Seuil_Alerte", "Emplacement"]
-        ws.append(headers)
-        for row in DEFAULT_STOCK:
-            ws.append([row["ID"], row["Categorie"], row["Designation"], row["Stock_Actuel"], row["Seuil_Alerte"], row["Emplacement"]])
-        wb.save(STOCK_EXCEL_FILE)
+# ══════════════════════════════════════════════════════════════
+# 3. CONTEXTE POUR L'IA (SYSTEM PROMPT)
+# ══════════════════════════════════════════════════════════════
+SYSTEM_PROMPT = """Tu es l'assistant intelligent du stock plastique de l'INMED.
+Ton rôle est d'analyser les demandes des chercheurs rédigées en langage naturel pour en extraire les articles commandés.
 
-    # Historique JSON pour les commandes de préparation d'Olivier
-    if not Path(ORDERS_LOG_FILE).exists():
-        with open(ORDERS_LOG_FILE, "w", encoding="utf-8") as f:
-            json.dump([], f, indent=2, ensure_ascii=False)
-
-init_databases()
-
-# Fonctions de manipulation de la base Excel
-def load_stock_df():
-    return pd.read_excel(STOCK_EXCEL_FILE)
-
-def save_stock_df(df):
-    df.to_excel(STOCK_EXCEL_FILE, index=False)
-
-def load_preparations():
-    with open(ORDERS_LOG_FILE, "r", encoding="utf-8") as f:
-        return json.load(f)
-
-def save_preparations(data):
-    with open(ORDERS_LOG_FILE, "w", encoding="utf-8") as f:
-        json.dump(data, f, indent=2, ensure_ascii=False)
-
-SYSTEM_PROMPT = """Tu es un assistant IA spécialisé dans la gestion logistique des consommables plastiques de l'institut INMED.
-Ton rôle est d'analyser les demandes de matériel formulées par les chercheurs en langage naturel, de vérifier la cohérence avec l'inventaire existant et de renvoyer un ordre structuré au format JSON pour que le système mette à jour la file de préparation d'Olivier (le gestionnaire).
-
-Tu dois TOUJOURS répondre UNIQUEMENT avec un objet JSON structuré comme suit :
+Quand l'utilisateur s'adresse à toi pour commander, identifie les produits correspondants dans la base et réponds UNIQUEMENT avec un JSON au format suivant :
 
 {
-  "statut": "valide" ou "incomplet",
-  "demandeur": "Nom du chercheur (si mentionné, sinon 'Inconnu')",
-  "equipe": "Nom de l'équipe (si mentionné, sinon 'Inconnue')",
-  "articles_demandes": [
+  "statut": "succes",
+  "commandes": [
     {
-      "designation_proche": "Nom de l'article dans l'inventaire le plus ressemblant",
-      "quantite": 3
+      "designation": "Nom exact du produit dans la base",
+      "quantite": 2,
+      "unite": "boite ou unité"
     }
   ],
-  "commentaire_ia": "Message d'explication ou de confirmation en français pour l'utilisateur."
+  "message": "Un petit récapitulatif sympa en français de ce que tu as compris."
 }
 
-Voici l'inventaire exact actuellement disponible à l'INMED (n'utilise que ces termes exacts dans le champ 'designation_proche') :
-- Seringue BD 5ml (Boite de 100)
-- Seringue BD 10ml (Boite de 100)
-- Seringue BD 20ml (Boite de 120)
-- Aiguille Verte 21G (0.8x120mm) (Bte 100)
-- Aiguille Noire 22G (0.7x30mm) (Bte 100)
-- Cône Bleu 100-1000µl (Racks de 96)
-- Cône Jaune 10-200µl (Racks de 96)
-- Cône Blanc 0.1-10µl (Racks de 96)
-- Falcon 15ml stérile (Sachet de 50)
-- Falcon 50ml stérile (Sachet de 25)
-- Eppendorf 1.5ml (Sachet de 500)
-- Eppendorf 2ml (Sachet de 500)
-- Boite de Pétri 90mm (Sachet de 20)
+Si l'utilisateur demande quelque chose qui n'est pas dans le catalogue, réponds simplement avec un message poli expliquant que le produit n'est pas répertorié.
 
-Fais preuve de souplesse : si l'utilisateur demande des 'cones bleus', associe-le à 'Cône Bleu 100-1000µl (Racks de 96)'. Si l'utilisateur demande des 'seringues de 5ml', associe-le à 'Seringue BD 5ml (Boite de 100)'.
-Ne fais aucune phrase en dehors du bloc JSON.
+Voici la liste des produits autorisés dans la base (respecte la désignation exacte) :
+- "Stéricups GP O.22µm 150 ml"
+- "Stéricups GP O.22µm 250 ml"
+- "Stéricups GP O.22µm 500 ml"
+- "Filtres seringue GP 33 mm, 0,22 µm"
+- "Filtres seringue GV 13 mm, 0,2 µm"
+- "Filtres seringue HA 33mm, 0,45µm"
+- "Flacons bouchons blancs 40ml"
+- "Flacons bouchons rouges 125ml"
+- "Scotch couleur rouge"
+- "Scotch couleur Bleu"
+- "Scotch couleur jaune"
+- "Scotch couleur blanc"
+- "Coupelle de pesée bleue petite"
+- "Coupelle de pesée bleue moyenne"
+- "Coupelle de pesée bleue grande"
+- "Coupelle de pesée blanche 40x40 petite"
 """
 
-def call_groq_agent(user_message):
-    """Appelle Groq pour transformer la demande informelle en structure JSON de commande."""
-    if not CONFIG["groq_api_key"]:
-        return None
+# ══════════════════════════════════════════════════════════════
+# 4. INITIALISATION DE L'ÉTAT DE SESSION
+# ══════════════════════════════════════════════════════════════
+if "db_stock" not in st.session_state:
+    st.session_state.db_stock = INITIAL_STOCK.copy()
 
-    headers = {
-        "Authorization": f"Bearer {CONFIG['groq_api_key']}",
-        "Content-Type": "application/json"
-    }
-    payload = {
-        "model": CONFIG["model"],
-        "messages": [
-            {"role": "system", "content": SYSTEM_PROMPT},
-            {"role": "user", "content": user_message}
-        ],
-        "temperature": 0.1,
-        "response_format": {"type": "json_object"}
-    }
+if "commandes_attente" not in st.session_state:
+    st.session_state.commandes_attente = []
+
+if "chat_history" not in st.session_state:
+    st.session_state.chat_history = []
+
+# ══════════════════════════════════════════════════════════════
+# 5. FONCTIONS DE PARSING EXCEL & RECHERCHE DES PRODUITS
+# ══════════════════════════════════════════════════════════════
+def parse_excel_demande(file_bytes):
+    """Analyse la fiche Excel de demande plastique INMED téléversée par un chercheur"""
     try:
-        r = requests.post(CONFIG["groq_url"], json=payload, headers=headers, timeout=20)
-        r.raise_for_status()
-        content = r.json()["choices"][0]["message"]["content"]
-        return json.loads(content)
+        wb = openpyxl.load_workbook(io.BytesIO(file_bytes), data_only=True)
+        ws = wb.active # Prend la première feuille active
+        
+        # 1. Extraction des métadonnées (Ligne 1 de la fiche INMED)
+        nom_chercheur = ws["A1"].value or "Non spécifié"
+        destination = ws["B1"].value or "Équipe non spécifiée"
+        date_demande = ws["E1"].value or datetime.today().strftime("%d/%m/%Y")
+        
+        # Nettoyage des chaînes de texte des métadonnées
+        if isinstance(nom_chercheur, str):
+            nom_chercheur = nom_chercheur.replace("NOM PRENOM :", "").strip()
+        if isinstance(destination, str):
+            destination = destination.replace("DESTINATION :", "").strip()
+        if isinstance(date_demande, str):
+            date_demande = date_demande.replace("DATE :", "").strip()
+            
+        articles_demandes = []
+        
+        # 2. Lecture des lignes à partir de la ligne 5 (après l'en-tête de désignation)
+        for row in range(5, ws.max_row + 1):
+            designation = ws[f"A{row}"].value
+            info = ws[f"B{row}"].value
+            qty = ws[f"H{row}"].value # Colonne H : "quantité demandée"
+            
+            if designation and qty and isinstance(qty, (int, float)) and qty > 0:
+                full_name = f"{designation}"
+                if info:
+                    full_name += f" {info}"
+                articles_demandes.append({
+                    "raw_designation": full_name.strip(),
+                    "quantite": int(qty)
+                })
+                
+        return {
+            "success": True,
+            "chercheur": nom_chercheur,
+            "equipe": destination,
+            "date": date_demande,
+            "items": articles_demandes
+        }
     except Exception as e:
-        st.error(f"Erreur technique Groq : {e}")
-        return None
+        return {"success": False, "error": str(e)}
 
-st.title("🧪 GestStock INMED — Consommables Plastiques")
-st.markdown("Système d'inventaire intelligent et de préparation des commandes internes.")
+def map_raw_to_db(raw_name):
+    """Tente de mapper intelligemment une saisie utilisateur vers notre base de données"""
+    raw_clean = raw_name.lower()
+    
+    # Raccourcis de correspondance intelligente
+    mappings = {
+        "stericup 150": "Stéricups GP O.22µm 150 ml",
+        "stericup 250": "Stéricups GP O.22µm 250 ml",
+        "stericup 500": "Stéricups GP O.22µm 500 ml",
+        "filtre 33": "Filtres seringue GP 33 mm, 0,22 µm",
+        "filtre 13": "Filtres seringue GV 13 mm, 0,2 µm",
+        "filtre 0.45": "Filtres seringue HA 33mm, 0,45µm",
+        "flacon blanc": "Flacons bouchons blancs 40ml",
+        "flacon rouge": "Flacons bouchons rouges 125ml",
+        "scotch rouge": "Scotch couleur rouge",
+        "scotch bleu": "Scotch couleur Bleu",
+        "scotch jaune": "Scotch couleur jaune",
+        "scotch blanc": "Scotch couleur blanc",
+        "coupelle bleue petite": "Coupelle de pesée bleue petite",
+        "coupelle bleue moyenne": "Coupelle de pesée bleue moyenne",
+        "coupelle bleue grande": "Coupelle de pesée bleue grande",
+        "coupelle blanche": "Coupelle de pesée blanche 40x40 petite",
+    }
+    
+    for key, val in mappings.items():
+        if key in raw_clean:
+            return val
+            
+    # Recherche exacte ou partielle
+    for item in st.session_state.db_stock:
+        if item["designation"].lower() in raw_clean or raw_clean in item["designation"].lower():
+            return item["designation"]
+            
+    return None
 
-# Sidebar pour la navigation et le choix d'espace
-st.sidebar.image("https://placehold.co/100x100/1e293b/ffffff?text=INMED", use_container_width=False)
-st.sidebar.title("Navigation")
-app_mode = st.sidebar.radio(
-    "Choisissez votre espace :",
-    ["🔬 Espace Chercheur (Demander du matériel)", "🔑 Espace Olivier (Gestionnaire de Stock)"]
+# ══════════════════════════════════════════════════════════════
+# 6. INTERFACE STREAMLIT
+# ══════════════════════════════════════════════════════════════
+st.set_page_config(page_title="GestStock INMED", page_icon="🧪", layout="wide")
+
+# Menu de navigation
+onglet = st.sidebar.radio(
+    "🧭 Navigation", 
+    ["👋 Espace Chercheurs (Demandes)", "🔑 Espace Olivier (Gestionnaire)"]
 )
 
-# Chargement permanent des données en cache de session
-if "stock_df" not in st.session_state:
-    st.session_state.stock_df = load_stock_df()
+# ══════════════════════════════════════════════════════════════
+# ONGLET 1 : ESPACE CHERCHEURS (DÉPÔT DES DEMANDES)
+# ══════════════════════════════════════════════════════════════
+if onglet == "👋 Espace Chercheurs (Demandes)":
+    st.header("🧪 Dépôt de demande de consommables plastiques")
+    st.write("Bienvenue sur la plateforme de commande. Vous pouvez déposer votre demande de deux manières différentes :")
 
-if "preparations" not in st.session_state:
-    st.session_state.preparations = load_preparations()
-
-# Petit panneau de résumé en haut
-df_stock = st.session_state.stock_df
-total_refs = len(df_stock)
-ruptures = len(df_stock[df_stock["Stock_Actuel"] == 0])
-alertes = len(df_stock[(df_stock["Stock_Actuel"] <= df_stock["Seuil_Alerte"]) & (df_stock["Stock_Actuel"] > 0)])
-preps_attente = len([p for p in st.session_state.preparations if p["Statut"] == "À préparer"])
-
-col_m1, col_m2, col_m3, col_m4 = st.columns(4)
-with col_m1:
-    st.metric("Total des Références", total_refs)
-with col_m2:
-    st.metric("En Rupture critique 🔴", ruptures, delta=f"{ruptures} vide(s)", delta_color="inverse")
-with col_m3:
-    st.metric("Sous le Seuil d'Alerte 🟠", alertes)
-with col_m4:
-    st.metric("Bons en attente d'Olivier 📦", preps_attente)
-
-st.write("---")
-
-if app_mode == "🔬 Espace Chercheur (Demander du matériel)":
-    st.header("🔬 Faire une demande de consommables")
-    st.write("Vous pouvez formuler votre demande par chat (Langage Naturel) ou en téléversant un bon de commande Excel.")
-
-    tab_chat, tab_file = st.tabs(["💬 Demande par Chat IA", "📁 Import direct d'un Fichier Demande"])
-
-    with tab_chat:
-        st.subheader("💬 Parlez à l'Assistant IA de l'Armoire de Stock")
-        st.write("Exemple : *'Bonjour ! C'est Thomas de l'équipe Neuro. Il me faudrait 4 sachets de Falcon 15ml et 2 boîtes d'aiguilles vertes s'il vous plaît.'*")
-
-        user_chat = st.text_area("Rédigez votre demande ici...", height=100, key="chat_input_text")
-
-        if st.button("Analyse de ma demande 🧠", use_container_width=True):
-            if not user_chat.strip():
-                st.warning("Veuillez saisir un message avant d'envoyer.")
-            elif not CONFIG["groq_api_key"]:
-                st.error("⚠️ Clé API Groq non configurée. Impossible d'utiliser l'assistant IA.")
-            else:
-                with st.spinner("L'IA analyse vos besoins et vérifie l'armoire..."):
-                    parsed_res = call_groq_agent(user_chat)
-                    
-                    if parsed_res:
-                        st.success("Analyse terminée ! Voici ce que l'IA a compris :")
-                        
-                        # Affichage du résumé extrait
-                        col_da1, col_da2 = st.columns(2)
-                        with col_da1:
-                            st.info(f"**Chercheur :** {parsed_res.get('demandeur')}\n\n**Équipe :** {parsed_res.get('equipe')}")
-                        with col_da2:
-                            st.write("**Articles demandés décryptés :**")
-                            dem_items = parsed_res.get("articles_demandes", [])
-                            for it in dem_items:
-                                st.write(f"- {it.get('quantite')} x **{it.get('designation_proche')}**")
-                        
-                        st.markdown(f"**Note de l'IA :** *{parsed_res.get('commentaire_ia')}*")
-
-                        # Vérification concrète des stocks
-                        st.subheader("📊 Vérification de la disponibilité immédiate")
-                        can_commit = True
-                        items_to_save = []
-
-                        for it in dem_items:
-                            name = it.get("designation_proche")
-                            qty_req = int(it.get("quantite", 0))
-
-                            # Recherche dans la session state
-                            match_row = df_stock[df_stock["Designation"] == name]
-                            if not match_row.empty:
-                                stock_qty = int(match_row.iloc[0]["Stock_Actuel"])
-                                emplacement = match_row.iloc[0]["Emplacement"]
-                                item_id = match_row.iloc[0]["ID"]
-
-                                if stock_qty >= qty_req:
-                                    st.write(f"✅ **{name}** : {qty_req} demandé(s) (Disponible en stock - Emplacement: *{emplacement}*)")
-                                    items_to_save.append({
-                                        "ID": item_id,
-                                        "Designation": name,
-                                        "Quantite": qty_req,
-                                        "Emplacement": emplacement
-                                    })
-                                else:
-                                    st.error(f"❌ **{name}** : {qty_req} demandé(s) mais seulement **{stock_qty}** disponible(s).")
-                                    can_commit = False
-                            else:
-                                st.error(f"❓ Référence inconnue : **{name}**")
-                                can_commit = False
-
-                        if can_commit and items_to_save:
-                            # Bouton pour valider définitivement et ajouter à la file d'Olivier
-                            if st.button("🚀 ENVOYER LE BON DE PRÉPARATION À OLIVIER", type="primary", use_container_width=True):
-                                # Création de la préparation
-                                new_prep = {
-                                    "ID_Commande": f"CMD-{datetime.now().strftime('%Y%m%d-%H%M%S')}",
-                                    "Date": datetime.now().strftime("%d/%m/%Y à %H:%M"),
-                                    "Demandeur": parsed_res.get("demandeur", "Inconnu"),
-                                    "Equipe": parsed_res.get("equipe", "Inconnue"),
-                                    "Articles": items_to_save,
-                                    "Statut": "À préparer"
-                                }
-                                st.session_state.preparations.append(new_prep)
-                                save_preparations(st.session_state.preparations)
-                                st.success("🎉 Votre commande a été ajoutée à la file de préparation d'Olivier ! Vous recevrez votre matériel dès qu'il l'aura validée.")
-                                st.balloons()
-                        else:
-                            st.warning("⚠️ Impossible de soumettre la demande : certains articles demandés dépassent le stock physique actuel. Veuillez ajuster les quantités.")
-
-    with tab_file:
-        st.subheader("📁 Déposez le fichier Excel rempli par votre équipe")
-        st.write("Le système va lire la colonne des désignations et des quantités demandées pour vérifier notre armoire de stock.")
-
-        uploaded_file = st.file_uploader("Faites glisser votre fichier Excel ici...", type=["xlsx", "xls"])
+    tab1, tab2, tab3 = st.tabs([
+        "📥 Déposer votre Fiche Excel", 
+        "💬 Demander en écrivant à l'IA", 
+        "📋 Voir le catalogue disponible"
+    ])
+    
+    # --- OPTION 1 : GLISSER-DÉPOSER LE FICHIER EXCEL ---
+    with tab1:
+        st.subheader("Importation de votre Fiche Excel")
+        st.write("Faites simplement glisser votre fichier `Fiche demande labo plastique` complété ci-dessous.")
+        
+        uploaded_file = st.file_uploader("Choisissez un fichier Excel (.xlsx)", type=["xlsx"])
         
         if uploaded_file is not None:
-            try:
-                # Lecture brute de l'Excel téléversé
-                req_df = pd.read_excel(uploaded_file)
-                st.write("👀 Aperçu de votre fichier :")
-                st.dataframe(req_df.head(5), use_container_width=True)
-
-                st.info("💡 Pour l'instant, notre IA de lecture de fichiers associe automatiquement les colonnes 'Désignation' et 'Quantité' de votre Excel standard à notre base.")
-                # Simulation de validation
-                if st.button("Valider et vérifier ce fichier de commande", use_container_width=True):
-                    st.success("Fichier compatible ! L'ensemble des consommables demandés est en cours de traitement dans le module d'Olivier.")
-            except Exception as e:
-                st.error(f"Erreur lors de la lecture du fichier Excel : {e}")
-
-elif app_mode == "🔑 Espace Olivier (Gestionnaire de Stock)":
-    st.header("🔑 Espace Gestionnaire (Olivier)")
-    st.write("Gérez les seuils d'alertes, l'inventaire physique de vos armoires et traitez la file des bons de préparation.")
-
-    tab_attente, tab_inventaire, tab_config = st.tabs(["📦 Bons à préparer", "📊 Inventaire Physique de l'armoire", "⚙️ Paramètres"])
-
-    # --- ONGLET 1 : BONS EN ATTENTE ---
-    with tab_attente:
-        st.subheader("📦 File des demandes à préparer")
-        st.write("Lorsqu'une commande est validée ci-dessous, le stock est physiquement mis à jour et un bordereau est généré.")
-
-        preps_en_attente = [p for p in st.session_state.preparations if p["Statut"] == "À préparer"]
-
-        if not preps_en_attente:
-            st.success("🙌 Aucune commande en attente de préparation ! Beau travail Olivier.")
-        else:
-            for idx, prep in enumerate(preps_en_attente):
-                with st.expander(f"📦 Commande {prep['ID_Commande']} — {prep['Demandeur']} ({prep['Equipe']}) — {prep['Date']}", expanded=True):
-                    st.write("**Articles à mettre dans le carton :**")
+            with st.spinner("Analyse du fichier en cours..."):
+                file_bytes = uploaded_file.read()
+                result = parse_excel_demande(file_bytes)
+                
+                if result["success"]:
+                    st.success("✅ Fiche de demande lue avec succès !")
                     
-                    # Construction d'un tableau propre pour Olivier
-                    items_data = []
-                    for art in prep["Articles"]:
-                        items_data.append({
-                            "Désignation": art["Designation"],
-                            "Quantité": art["Quantite"],
-                            "Emplacement dans l'armoire": art["Emplacement"]
-                        })
-                    st.table(pd.DataFrame(items_data))
-
-                    col_ab1, col_ab2 = st.columns(2)
-                    with col_ab1:
-                        # Validation et soustraction du stock
-                        if st.button("✅ Valider la délivrance du matériel", key=f"val_delivery_{idx}", use_container_width=True):
-                            # Déduire physiquement du stock
-                            for art in prep["Articles"]:
-                                art_id = art["ID"]
-                                qty_to_sub = art["Quantite"]
-                                
-                                # Mise à jour de notre dataframe de session
-                                st.session_state.stock_df.loc[
-                                    st.session_state.stock_df["ID"] == art_id, "Stock_Actuel"
-                                ] -= qty_to_sub
-                            
-                            # Enregistrement
-                            save_stock_df(st.session_state.stock_df)
-                            
-                            # Changement statut de la préparation
-                            for p in st.session_state.preparations:
-                                if p["ID_Commande"] == prep["ID_Commande"]:
-                                    p["Statut"] = "Délivré"
-                                    p["Date_Delivrance"] = datetime.now().strftime("%d/%m/%Y à %H:%M")
-                            save_preparations(st.session_state.preparations)
-                            
-                            st.success(f"La commande {prep['ID_Commande']} a été retirée du stock et marquée comme délivrée !")
-                            st.rerun()
-
-                    with col_ab2:
-                        if st.button("❌ Annuler la commande", key=f"ann_delivery_{idx}", use_container_width=True):
-                            # Changement de statut
-                            for p in st.session_state.preparations:
-                                if p["ID_Commande"] == prep["ID_Commande"]:
-                                    p["Statut"] = "Annulée"
-                            save_preparations(st.session_state.preparations)
-                            st.warning(f"La commande {prep['ID_Commande']} a été annulée.")
-                            st.rerun()
-
-    # --- ONGLET 2 : INVENTAIRE PHYSIQUE ---
-    with tab_inventaire:
-        st.subheader("📊 Inventaire de l'armoire plastique en temps réel")
-        st.write("Modifiez les stocks physiques ci-dessous si vous faites un inventaire à la main.")
-
-        # Application d'un style visuel sur le tableau pour repérer les alertes
-        def style_stock(row):
-            if row["Stock_Actuel"] == 0:
-                return ["background-color: #fee2e2"] * len(row) # Rouge clair si rupture
-            elif row["Stock_Actuel"] <= row["Seuil_Alerte"]:
-                return ["background-color: #ffedd5"] * len(row) # Orange clair si seuil alerte atteint
-            return [""] * len(row)
-
-        df_display = st.session_state.stock_df.copy()
-        styled_df = df_display.style.apply(style_stock, axis=1)
-        st.dataframe(styled_df, use_container_width=True, height=450)
-
-        st.info("💡 Légende : Rouge = Rupture critique de stock | Orange = Seuil d'alerte atteint (à recommander)")
-
-        # Export Excel pour Olivier
-        st.write("---")
-        st.subheader("📥 Export / Import Excel de l'inventaire")
-        col_ex1, col_ex2 = st.columns(2)
-        with col_ex1:
-            try:
-                with open(STOCK_EXCEL_FILE, "rb") as f:
-                    st.download_button(
-                        label="💾 Télécharger l'état de stock actuel (Excel)",
-                        data=f,
-                        file_name=f"Inventaire_Plastique_INMED_{datetime.now().strftime('%Y-%m-%d')}.xlsx",
-                        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-                        use_container_width=True
-                    )
-            except Exception as e:
-                st.error(f"Erreur de génération du fichier de téléchargement : {e}")
-        with col_ex2:
-            re_upload = st.file_uploader("Ré-importer un fichier d'inventaire mis à jour", type=["xlsx"])
-            if re_upload is not None:
-                try:
-                    new_df = pd.read_excel(re_upload)
-                    if "ID" in new_df.columns and "Stock_Actuel" in new_df.columns:
-                        save_stock_df(new_df)
-                        st.session_state.stock_df = new_df
-                        st.success("✅ Base de stock mise à jour avec succès depuis l'Excel !")
-                        st.rerun()
+                    # Affichage des métadonnées détectées
+                    col_met1, col_met2, col_met3 = st.columns(3)
+                    with col_met1:
+                        st.info(f"👤 **Chercheur :** {result['chercheur']}")
+                    with col_met2:
+                        st.info(f"👥 **Destination :** {result['equipe']}")
+                    with col_met3:
+                        st.info(f"📅 **Date :** {result['date']}")
+                    
+                    # Construction du tableau de commande
+                    parsed_items = []
+                    found_any = False
+                    
+                    for row in result["items"]:
+                        db_name = map_raw_to_db(row["raw_designation"])
+                        if db_name:
+                            parsed_items.append({
+                                "designation": db_name,
+                                "quantite": row["quantite"],
+                                "disponible": "Oui"
+                            })
+                            found_any = True
+                        else:
+                            parsed_items.append({
+                                "designation": f"⚠️ {row['raw_designation']} (Non trouvé dans le stock)",
+                                "quantite": row["quantite"],
+                                "disponible": "Inconnu"
+                            })
+                    
+                    if found_any:
+                        df_preview = pd.DataFrame(parsed_items)
+                        st.dataframe(df_preview, use_container_width=True)
+                        
+                        # Bouton de soumission finale
+                        if st.button("🚀 Soumettre ma demande à Olivier", use_container_width=True, type="primary"):
+                            # Enregistrement de la commande dans la file d'attente globale
+                            st.session_state.commandes_attente.append({
+                                "id": len(st.session_state.commandes_attente) + 1,
+                                "chercheur": result["chercheur"],
+                                "equipe": result["equipe"],
+                                "date": result["date"],
+                                "items": [item for item in parsed_items if "⚠️" not in item["designation"]],
+                                "statut": "En attente"
+                            })
+                            st.balloons()
+                            st.success("✅ Votre commande a bien été enregistrée et transmise à Olivier. Vous pouvez aller récupérer vos consommables !")
                     else:
-                        st.error("Le fichier importé doit contenir au moins les colonnes 'ID' et 'Stock_Actuel'.")
-                except Exception as e:
-                    st.error(f"Erreur d'import : {e}")
+                        st.warning("Aucun article avec une quantité demandée supérieure à 0 n'a été détecté dans votre fichier Excel.")
+                else:
+                    st.error(f"Impossible de lire le fichier Excel : {result['error']}")
 
-    # --- ONGLET 3 : PARAMÈTRES ET CONFIGURATION ---
-    with tab_config:
-        st.subheader("⚙️ Configuration des alertes et des consommables")
-        st.write("Ici, vous pouvez ajouter une nouvelle référence ou ajuster les seuils d'alerte des e-mails automatiques.")
+    # --- OPTION 2 : ASSISTANT IA DISCUSSION ---
+    with tab2:
+        st.subheader("Commandez en parlant naturellement à l'IA")
+        st.write("Exemple : *'Salut Olivier (via l'IA), j'aurais besoin de 2 cartons de stéricups 250ml et un scotch rouge pour l'équipe Neuro s'il te plaît'*")
         
-        with st.form("add_item_form"):
-            st.write("**Ajouter un nouveau consommable à l'armoire :**")
-            new_id = st.text_input("Code ID (ex: FAL250)", "FAL250")
-            new_cat = st.selectbox("Catégorie", ["Seringues", "Aiguilles", "Cones Pipettes", "Tubes Falcon", "Microtubes", "Culture", "Autre"])
-            new_des = st.text_input("Désignation précise", "Flacon Falcon 250ml (Sachet de 10)")
-            new_qty = st.number_input("Quantité initiale en stock", value=10, min_value=0)
-            new_alert = st.number_input("Seuil d'alerte de réapprovisionnement", value=2, min_value=0)
-            new_loc = st.text_input("Emplacement de stockage", "Armoire C - Étagère 4")
+        # Zone de discussion
+        for chat in st.session_state.chat_history:
+            with st.chat_message(chat["role"]):
+                st.write(chat["content"])
+                
+        if user_prompt := st.chat_input("Écrivez votre demande ici..."):
+            st.session_state.chat_history.append({"role": "user", "content": user_prompt})
+            
+            # Appel à l'API Groq Cloud
+            if not groq_key:
+                st.error("L'IA n'est pas configurée. Veuillez ajouter votre `GROQ_API_KEY` dans les Secrets de Streamlit.")
+            else:
+                with st.spinner("L'assistant IA de stock analyse votre demande..."):
+                    payload = {
+                        "model": CONFIG["model"],
+                        "messages": [
+                            {"role": "system", "content": SYSTEM_PROMPT},
+                            {"role": "user", "content": user_prompt}
+                        ],
+                        "temperature": 0.1,
+                        "response_format": {"type": "json_object"}
+                    }
+                    try:
+                        r = requests.post(
+                            CONFIG["groq_url"], 
+                            json=payload, 
+                            headers={"Authorization": f"Bearer {groq_key}", "Content-Type": "application/json"},
+                            timeout=25
+                        )
+                        r.raise_for_status()
+                        ia_response = r.json()["choices"][0]["message"]["content"]
+                        data_json = json.loads(ia_response)
+                        
+                        msg_ia = data_json.get("message", "Demande enregistrée.")
+                        st.session_state.chat_history.append({"role": "assistant", "content": msg_ia})
+                        
+                        # Si l'IA a détecté des articles valides
+                        if "commandes" in data_json and data_json["commandes"]:
+                            st.info("📦 **Articles détectés par l'IA :**")
+                            df_ia = pd.DataFrame(data_json["commandes"])
+                            st.dataframe(df_ia, use_container_width=True)
+                            
+                            nom_user = st.text_input("Votre Nom complet :", placeholder="ex: Jean Dupont")
+                            equipe_user = st.text_input("Votre Équipe / Destination :", placeholder="ex: Équipe Neuro")
+                            
+                            if st.button("🚀 Confirmer et soumettre cette commande"):
+                                if nom_user and equipe_user:
+                                    # Envoi en file d'attente
+                                    st.session_state.commandes_attente.append({
+                                        "id": len(st.session_state.commandes_attente) + 1,
+                                        "chercheur": nom_user,
+                                        "equipe": equipe_user,
+                                        "date": datetime.today().strftime("%d/%m/%Y"),
+                                        "items": data_json["commandes"],
+                                        "statut": "En attente"
+                                    })
+                                    st.success("✅ Commande enregistrée avec succès !")
+                                    st.balloons()
+                                else:
+                                    st.warning("Veuillez renseigner votre Nom et votre Équipe pour finaliser l'envoi.")
+                    except Exception as e:
+                        st.error(f"Erreur technique de l'assistant IA : {e}")
+            st.rerun()
 
-            if st.form_submit_button("Ajouter à l'inventaire ➕"):
-                # Ajout de la ligne
-                new_row = {
-                    "ID": new_id,
-                    "Categorie": new_cat,
-                    "Designation": new_des,
-                    "Stock_Actuel": new_qty,
-                    "Seuil_Alerte": new_alert,
-                    "Emplacement": new_loc
-                }
-                st.session_state.stock_df = pd.concat([st.session_state.stock_df, pd.DataFrame([new_row])], ignore_index=True)
-                save_stock_df(st.session_state.stock_df)
-                st.success(f"Désignation '{new_des}' ajoutée avec succès à l'inventaire !")
-                st.rerun()
+    # --- OPTION 3 : CATALOGUE DE STOCK DISPONIBLE ---
+    with tab3:
+        st.subheader("📋 Consommables Plastiques Disponibles")
+        df_catalogue = pd.DataFrame(st.session_state.db_stock)
+        
+        # Masquer les seuils et données critiques pour l'utilisateur public
+        df_public = df_catalogue[["categorie", "designation", "cdt", "ref_fab"]].copy()
+        
+        st.dataframe(df_public, use_container_width=True)
+
+
+# ══════════════════════════════════════════════════════════════
+# ONGLET 2 : ESPACE OLIVIER (SÉCURISÉ)
+# ══════════════════════════════════════════════════════════════
+elif onglet == "🔑 Espace Olivier (Gestionnaire)":
+    st.header("🔑 Espace d'administration du stock")
+    
+    password = st.text_input("Saisissez le code d'accès administrateur :", type="password")
+    
+    if password == CONFIG["admin_pass"]:
+        st.success("🔓 Accès administrateur autorisé.")
+        
+        adm_tab1, adm_tab2, adm_tab3 = st.tabs([
+            "📥 File d'attente des commandes", 
+            "📊 État du stock réel", 
+            "⚙️ Outils d'inventaire"
+        ])
+        
+        # --- ONGLETS ADM 1 : FILE D'ATTENTE DES COMMANDES ---
+        with adm_tab1:
+            st.subheader("📋 Commandes reçues à préparer")
+            
+            attente = [c for c in st.session_state.commandes_attente if c["statut"] == "En attente"]
+            
+            if not attente:
+                st.write("☕ Aucune commande en attente de préparation pour le moment.")
+            else:
+                for cmd in attente:
+                    with st.expander(f"📦 Commande #{cmd['id']} - {cmd['chercheur']} ({cmd['equipe']}) - {cmd['date']}"):
+                        st.write("**Articles demandés :**")
+                        df_cmd_items = pd.DataFrame(cmd["items"])
+                        st.dataframe(df_cmd_items, use_container_width=True)
+                        
+                        col_val1, col_val2 = st.columns(2)
+                        with col_val1:
+                            if st.button("✅ Valider et déduire du Stock", key=f"val_{cmd['id']}", use_container_width=True):
+                                # Déduction réelle des stocks
+                                error_stock = False
+                                error_msg = ""
+                                
+                                # Vérification préliminaire
+                                for order_item in cmd["items"]:
+                                    item_db = next((item for item in st.session_state.db_stock if item["designation"] == order_item["designation"]), None)
+                                    if item_db:
+                                        if item_db["stock"] < order_item["quantite"]:
+                                            error_stock = True
+                                            error_msg += f"\n- Stock insuffisant pour {order_item['designation']} (Demandé : {order_item['quantite']}, En Stock : {item_db['stock']})"
+                                
+                                if error_stock:
+                                    st.error(f"Impossible de valider la commande : {error_msg}")
+                                else:
+                                    # Déduction finale
+                                    for order_item in cmd["items"]:
+                                        item_db = next((item for item in st.session_state.db_stock if item["designation"] == order_item["designation"]), None)
+                                        if item_db:
+                                            item_db["stock"] -= order_item["quantite"]
+                                    cmd["statut"] = "Délivrée"
+                                    st.success("✅ Commande validée. Stock déduit avec succès !")
+                                    st.rerun()
+                                    
+                        with col_val2:
+                            if st.button("❌ Annuler / Rejeter la commande", key=f"rej_{cmd['id']}", use_container_width=True):
+                                cmd["statut"] = "Annulée"
+                                st.warning("La commande a été marquée comme annulée.")
+                                st.rerun()
+
+        # --- ONGLETS ADM 2 : TABLEAU DU STOCK RÉEL ---
+        with adm_tab2:
+            st.subheader("📊 Tableau de bord d'inventaire")
+            
+            stock_data = []
+            for item in st.session_state.db_stock:
+                statut_color = "🟢 OK"
+                if item["stock"] <= 0:
+                    statut_color = "🔴 Rupture de Stock"
+                elif item["stock"] <= item["seuil_alerte"]:
+                    statut_color = "🟠 Alerte Seuil Bas"
+                    
+                stock_data.append({
+                    "Catégorie": item["categorie"],
+                    "Désignation": item["designation"],
+                    "Conditionnement": item["cdt"],
+                    "Réf. Fabricant": item["ref_fab"],
+                    "Stock Actuel": item["stock"],
+                    "Seuil d'Alerte": item["seuil_alerte"],
+                    "État": statut_color
+                })
+                
+            df_stock_adm = pd.DataFrame(stock_data)
+            st.dataframe(df_stock_adm, use_container_width=True)
+
+        # --- ONGLETS ADM 3 : OUTILS D'INVENTAIRE (EXPORT EXCEL / MODIFICATION DIRECTE) ---
+        with adm_tab3:
+            st.subheader("⚙️ Outils d'administration rapides")
+            
+            # Formulaire de réapprovisionnement direct
+            st.write("**Recharger manuellement la quantité d'un produit :**")
+            prod_selected = st.selectbox("Sélectionnez le consommable :", [p["designation"] for p in st.session_state.db_stock])
+            qty_add = st.number_input("Quantité reçue en livraison :", min_value=1, value=10)
+            
+            if st.button("➕ Ajouter au Stock physique", use_container_width=True):
+                item_db = next((item for item in st.session_state.db_stock if item["designation"] == prod_selected), None)
+                if item_db:
+                    item_db["stock"] += qty_add
+                    st.success(f"✅ Nouveau stock de {prod_selected} mis à jour : **{item_db['stock']} unités**.")
+                    st.rerun()
+
+            st.write("---")
+            
+            # Export de l'inventaire en Excel
+            st.write("**Exporter l'état de stock actuel pour vos archives ou commandes fournisseurs :**")
+            df_export = pd.DataFrame(st.session_state.db_stock)
+            
+            buffer = io.BytesIO()
+            with pd.ExcelWriter(buffer, engine='openpyxl') as writer:
+                df_export.to_excel(writer, index=False, sheet_name='État des Stocks')
+            
+            st.download_button(
+                label="💾 Télécharger l'inventaire complet (.xlsx)",
+                data=buffer.getvalue(),
+                file_name=f"Inventaire_Plastique_INMED_{datetime.today().strftime('%d-%m-%Y')}.xlsx",
+                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                use_container_width=True
+            )
+            
+    elif password != "" and password != CONFIG["admin_pass"]:
+        st.error("❌ Code d'accès administrateur incorrect.")
