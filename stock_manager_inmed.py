@@ -272,6 +272,7 @@ def map_raw_to_db(raw_name):
             return item["designation"]
     return None
 
+# Initialisation du stock
 if "db_stock" not in st.session_state:
     st.session_state.db_stock = load_stock_state()
 
@@ -299,7 +300,7 @@ def get_dynamic_system_prompt():
     return f"""Tu es l'assistant intelligent du stock plastique de l'INMED.
 Ton rôle est d'analyser les demandes des chercheurs rédigées en langage naturel pour en extraire les articles commandés.
 
-Quand l'utilisateur s'adresse à toi pour commander, identifie les produits correspondants dans la base et réponds UNIQUEMENT avec un JSON au format suivant :
+Quand l'utilisateur s'adresse à toi pour commander, identifie les produits correspondants dans la base et réponds UNIQUEMENT with a JSON au format suivant :
 
 {{
   "statut": "succes",
