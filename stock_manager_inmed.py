@@ -115,30 +115,38 @@ def load_stock_state():
                 
                 if des:
                     des_str = str(des).strip()
-                    # Détection automatique des lignes de Catégorie (Désignation non vide, cdt et ref vides)
-                    if not cdt and not ref:
-                        # On ignore les textes d'en-tête de formulaire administratifs
-                        if any(x in des_str.upper() for x in ["NOM", "PRÉNOM", "PRENOM", "DESTINATION", "DATE", "ÉQUIPE", "EQUIPE"]):
-                            continue
-                        if len(des_str) < 45 and (des_str.isupper() or any(cat in des_str.upper() for cat in ["FILTRATION", "HISTO", "SCOTCH", "PESEE", "TUBE", "CONGELATION", "BOITE", "CONSO"])):
-                            current_category = des_str
-                        continue
                     
-                    # Formatage propre du conditionnement (gère les nombres ou chaînes de texte)
+                    # Nettoyage et formatage du conditionnement
+                    cdt_str = ""
                     if cdt is not None:
                         if isinstance(cdt, float) and cdt.is_integer():
                             cdt_str = str(int(cdt))
                         else:
                             cdt_str = str(cdt).strip()
-                    else:
-                        cdt_str = "Unité"
+                            
+                    # Nettoyage de la référence
+                    ref_str = ""
+                    if ref is not None:
+                        ref_str = str(ref).strip()
+                        if ref_str.upper() in ["NONE", "N/A", "NAN", "NULL"]:
+                            ref_str = ""
+
+                    # 💡 DÉTECTION EXPERTE DE CATÉGORIE :
+                    # Une catégorie est caractérisée par une désignation non vide,
+                    # mais un conditionnement (cdt) et une référence totalement vides.
+                    if not cdt_str and not ref_str:
+                        # On ignore les textes d'en-tête de formulaire administratifs
+                        if any(x in des_str.upper() for x in ["NOM", "PRÉNOM", "PRENOM", "DESTINATION", "DATE", "ÉQUIPE", "EQUIPE", "SIGNATURE", "VISA"]):
+                            continue
+                        current_category = des_str
+                        continue
                     
                     # Ajout de l'article au catalogue dynamique
                     catalog.append({
                         "categorie": current_category,
                         "designation": des_str,
-                        "cdt": cdt_str,
-                        "ref_fab": str(ref).strip() if ref else "N/A",
+                        "cdt": cdt_str if cdt_str else "Unité",
+                        "ref_fab": ref_str if ref_str else "N/A",
                         "stock": 50,         # Valeur initiale par défaut
                         "seuil_alerte": 5    # Seuil d'alerte par défaut
                     })
@@ -231,7 +239,6 @@ if "commandes_attente" not in st.session_state:
 if "chat_history" not in st.session_state:
     st.session_state.chat_history = []
 
-# Génération dynamique du System Prompt basé sur les VRAIS articles présents en stock
 def get_dynamic_system_prompt():
     produits_puces = "\n".join([f"- \"{item['designation']}\"" for item in st.session_state.db_stock])
     return f"""Tu es l'assistant intelligent du stock plastique de l'INMED.
@@ -479,7 +486,7 @@ elif onglet == "🔑 Espace Olivier (Gestionnaire)":
             st.subheader("📊 Tableau de bord d'inventaire")
             
             # Recherche rapide
-            recherche = st.text_input("Rechercher un produit ou une référence :")
+            recherche = st.text_input("Rechercher un produit, catégorie ou référence :")
             
             stock_data = []
             for item in st.session_state.db_stock:
@@ -505,6 +512,7 @@ elif onglet == "🔑 Espace Olivier (Gestionnaire)":
             if recherche:
                 df_stock_adm = df_stock_adm[
                     df_stock_adm["Désignation"].str.contains(recherche, case=False, na=False) |
+                    df_stock_adm["Catégorie"].str.contains(recherche, case=False, na=False) |
                     df_stock_adm["Réf. Fabricant"].str.contains(recherche, case=False, na=False)
                 ]
                 
@@ -569,6 +577,7 @@ elif onglet == "🔑 Espace Olivier (Gestionnaire)":
                         col_des, col_cdt, col_ref, _ = detect_columns(ws)
                         
                         updated_catalog = []
+                        current_category = "AUTRES"
                         for r in range(5, ws.max_row + 1):
                             des = get_cell_value(ws, r, col_des)
                             cdt = get_cell_value(ws, r, col_cdt)
@@ -576,34 +585,46 @@ elif onglet == "🔑 Espace Olivier (Gestionnaire)":
                             
                             if des:
                                 des_str = str(des).strip()
-                                if any(x in des_str.upper() for x in ["NOM", "PRENOM", "DESTINATION", "DATE", "EQUIPE"]):
+                                
+                                cdt_str = ""
+                                if cdt is not None:
+                                    if isinstance(cdt, float) and cdt.is_integer():
+                                        cdt_str = str(int(cdt))
+                                    else:
+                                        cdt_str = str(cdt).strip()
+                                        
+                                ref_str = ""
+                                if ref is not None:
+                                    ref_str = str(ref).strip()
+                                    if ref_str.upper() in ["NONE", "N/A", "NAN", "NULL"]:
+                                        ref_str = ""
+                                
+                                # 💡 DÉTECTION EXPERTE ET ULTRA-PRÉCISE :
+                                # Les catégories sont dorénavant détectées de manière purement logique :
+                                # S'il y a un nom mais pas de conditionnement et pas de référence, c'est une catégorie !
+                                if not cdt_str and not ref_str:
+                                    if any(x in des_str.upper() for x in ["NOM", "PRENOM", "DESTINATION", "DATE", "EQUIPE", "SIGNATURE", "VISA"]):
+                                        continue
+                                    current_category = des_str
                                     continue
                                 
                                 # Recherche de correspondance de stock existant
                                 matched_item = next((item for item in st.session_state.db_stock if item["designation"] == des_str), None)
                                 current_stock_level = matched_item["stock"] if matched_item else 50
                                 current_seuil_level = matched_item["seuil_alerte"] if matched_item else 5
-                                
-                                if cdt is not None:
-                                    if isinstance(cdt, float) and cdt.is_integer():
-                                        cdt_str = str(int(cdt))
-                                    else:
-                                        cdt_str = str(cdt).strip()
-                                else:
-                                    cdt_str = "Unité"
                                     
                                 updated_catalog.append({
-                                    "categorie": matched_item["categorie"] if matched_item else "AUTRES",
+                                    "categorie": current_category,
                                     "designation": des_str,
-                                    "cdt": cdt_str,
-                                    "ref_fab": str(ref).strip() if ref else "N/A",
+                                    "cdt": cdt_str if cdt_str else "Unité",
+                                    "ref_fab": ref_str if ref_str else "N/A",
                                     "stock": current_stock_level,
                                     "seuil_alerte": current_seuil_level
                                 })
                         
                         st.session_state.db_stock = updated_catalog
                         save_stock_state(updated_catalog)
-                        st.success("✅ Synchronisation réussie avec votre Excel !")
+                        st.success("✅ Synchronisation et nettoyage du catalogue réussis !")
                         st.rerun()
                     except Exception as e:
                         st.error(f"Erreur de re-scan : {e}")
