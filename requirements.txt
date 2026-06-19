@@ -2,4 +2,4 @@ streamlit
 pandas
 openpyxl
 requests
-4. Configurez l'application sur Streamlit Cloud et n'oubliez pas d'indiquer votre clé Groq dans la zone **Secrets** avec le nom `GROQ_API_KEY`.
+
