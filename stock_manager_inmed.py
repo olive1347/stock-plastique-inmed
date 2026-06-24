@@ -18,7 +18,7 @@ AUTHORIZED_IP_PREFIXES = [
 
 # Fichiers
 EXCEL_FILE = "Fiche demande labo plastique 2025-2026.xlsx"
-COMMANDES_FILE = "commandes.csv"  # Fichier pour stocker les commandes (à créer manuellement)
+COMMANDES_FILE = "commandes.csv"
 
 # ══════════════════════════════════════════════════════════════
 # SÉCURITÉ (IP)
@@ -51,22 +51,75 @@ if not verify_ip(client_ip):
 @st.cache_data(ttl=300)
 def load_excel():
     try:
+        # 1. Charger le fichier Excel
         df = pd.read_excel(EXCEL_FILE)
+
         if df.empty:
-            st.warning("⚠️ Le fichier Excel est vide.")
+            st.error("❌ Le fichier Excel est vide.")
             return pd.DataFrame(columns=["Article", "Stock", "Seuil"])
+
+        # 2. Détecter automatiquement les colonnes
+        available_columns = df.columns.tolist()
+        st.info(f"ℹ️ Colonnes détectées dans le fichier : **{available_columns}**")
+
+        # 3. Mapping intelligent des colonnes
+        column_mapping = {}
+
+        for col in available_columns:
+            col_lower = str(col).lower()
+            if any(word in col_lower for word in ["article", "produit", "nom", "référence", "réf", "item", "consommable", "matériel"]):
+                column_mapping[col] = "Article"
+            elif any(word in col_lower for word in ["stock", "quantité", "quantite", "dispo", "disponible", "available", "qté", "qte"]):
+                column_mapping[col] = "Stock"
+            elif any(word in col_lower for word in ["seuil", "minimum", "min", "alerte", "limite"]):
+                column_mapping[col] = "Seuil"
+
+        # 4. Appliquer le mapping
+        if column_mapping:
+            df = df.rename(columns=column_mapping)
+        else:
+            # Si aucun mapping trouvé, utiliser les 2 premières colonnes par défaut
+            st.warning("⚠️ Impossible de deviner les colonnes. Utilisation des 2 premières colonnes comme Article/Stock.")
+            if len(available_columns) >= 2:
+                df = df.rename(columns={available_columns[0]: "Article", available_columns[1]: "Stock"})
+            else:
+                st.error("❌ Le fichier doit avoir au moins 2 colonnes (Article et Stock).")
+                return pd.DataFrame(columns=["Article", "Stock", "Seuil"])
+
+        # 5. Vérifier que les colonnes requises existent
+        if "Article" not in df.columns or "Stock" not in df.columns:
+            missing = []
+            if "Article" not in df.columns:
+                missing.append("Article")
+            if "Stock" not in df.columns:
+                missing.append("Stock")
+            st.error(f"❌ Colonnes manquantes : {missing}. Colonnes disponibles : {list(df.columns)}")
+            return pd.DataFrame(columns=["Article", "Stock", "Seuil"])
+
+        # 6. Ajouter la colonne Seuil si elle n'existe pas
         if "Seuil" not in df.columns:
             df["Seuil"] = 10
+
         return df.dropna(how="all")
+
+    except FileNotFoundError:
+        st.error(f"❌ **FICHIER INTRUVABLE** : '{EXCEL_FILE}' n'existe pas dans le dossier.")
+        st.markdown("""
+        **Solution :**
+        1. Vérifie que le fichier s'appelle exactement `Fiche demande labo plastique 2025-2026.xlsx`
+        2. Place-le dans le même dossier que `stock_manager_inmed.py`
+        3. Redémarre l'application
+        """)
+        return pd.DataFrame(columns=["Article", "Stock", "Seuil"])
     except Exception as e:
-        st.error(f"❌ Erreur de chargement : {e}")
+        st.error(f"❌ Erreur de chargement du fichier Excel : {str(e)}")
         return pd.DataFrame(columns=["Article", "Stock", "Seuil"])
 
 def load_commandes():
     try:
         return pd.read_csv(COMMANDES_FILE)
     except:
-        return pd.DataFrame(columns=["Date", "Utilisateur", "Article", "Quantité", "Statut"])
+        return pd.DataFrame(columns=["Date", "Utilisateur", "Article", "Quantité", "Commentaire", "Statut"])
 
 def save_commandes(df):
     try:
@@ -98,7 +151,7 @@ if mode == "🛒 Passer une commande":
 
     # Charger le stock disponible
     stock_df = load_excel()
-    if stock_df.empty:
+    if stock_df.empty or "Article" not in stock_df.columns:
         st.error("❌ Aucun article disponible. Contactez l'administrateur.")
         st.stop()
 
@@ -134,7 +187,8 @@ if mode == "🛒 Passer une commande":
             if quantite > stock_dispo:
                 st.error(f"❌ Stock insuffisant ! Disponible : {stock_dispo}")
             else:
-                # Enregistrer la commande (dans session_state pour l'instant)
+                # Enregistrer la commande
+                nouvelles_commandes = load_commandes()
                 nouvelle_commande = {
                     "Date": datetime.now().strftime("%Y-%m-%d %H:%M"),
                     "Utilisateur": nom_utilisateur,
@@ -143,11 +197,8 @@ if mode == "🛒 Passer une commande":
                     "Commentaire": commentaire,
                     "Statut": "⏳ En attente"
                 }
-
-                # Stocker dans session_state (temporaire)
-                if "commandes" not in st.session_state:
-                    st.session_state.commandes = []
-                st.session_state.commandes.append(nouvelle_commande)
+                nouvelles_commandes = pd.concat([nouvelles_commandes, pd.DataFrame([nouvelle_commande])], ignore_index=True)
+                save_commandes(nouvelles_commandes)
 
                 st.success(f"✅ Commande enregistrée pour {quantite}x {article} !")
                 st.info("⚠️ Votre commande sera traitée par l'administrateur.")
@@ -168,18 +219,13 @@ elif mode == "👨‍🔬 Gérer les commandes (Admin)":
     stock_df = load_excel()
     commandes_df = load_commandes()
 
-    # Ajouter les commandes depuis session_state (si elles existent)
-    if "commandes" in st.session_state and len(st.session_state.commandes) > 0:
-        nouvelles_commandes = pd.DataFrame(st.session_state.commandes)
-        commandes_df = pd.concat([commandes_df, nouvelles_commandes], ignore_index=True)
-        st.session_state.commandes = []  # Vider après ajout
-
     # Afficher les commandes en attente
     st.subheader("⏳ Commandes en attente")
-    if commandes_df.empty or commandes_df["Statut"] == "✅ Validée":
+    commandes_en_attente = commandes_df[commandes_df["Statut"] == "⏳ En attente"]
+
+    if commandes_en_attente.empty:
         st.info("ℹ️ Aucune commande en attente.")
     else:
-        commandes_en_attente = commandes_df[commandes_df["Statut"] == "⏳ En attente"]
         st.dataframe(commandes_en_attente, use_container_width=True)
 
         # Bouton pour valider toutes les commandes
@@ -187,17 +233,21 @@ elif mode == "👨‍🔬 Gérer les commandes (Admin)":
             for index, row in commandes_en_attente.iterrows():
                 article = row["Article"]
                 quantite = row["Quantité"]
-                # Mettre à jour le stock (simulation)
-                stock_df.loc[stock_df["Article"] == article, "Stock"] -= quantite
+                # Mettre à jour le stock
+                if "Article" in stock_df.columns and "Stock" in stock_df.columns:
+                    stock_df.loc[stock_df["Article"] == article, "Stock"] -= quantite
                 # Mettre à jour le statut de la commande
                 commandes_df.loc[index, "Statut"] = "✅ Validée"
+
+            # Sauvegarder les commandes
+            save_commandes(commandes_df)
 
             st.success(f"✅ {len(commandes_en_attente)} commandes validées !")
             st.info("📥 Téléchargez le stock mis à jour ci-dessous.")
 
             # Afficher le stock mis à jour
             st.subheader("📦 Stock après validation")
-            st.dataframe(stock_df, use_container_width=True)
+            st.dataframe(stock_df[["Article", "Stock"]], use_container_width=True)
 
             # Bouton pour télécharger le stock mis à jour
             output = io.BytesIO()
