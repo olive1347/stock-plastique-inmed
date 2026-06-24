@@ -8,7 +8,10 @@ from datetime import datetime
 # ======================
 st.set_page_config(page_title="GestStock INMED", layout="wide")
 
+# Plages IP autorisées
 AUTHORIZED_IP_PREFIXES = ["127.0.0.1", "139.124.", "193.54.", "194.254."]
+
+# Nom du fichier Excel
 EXCEL_FILE = "stock-plastique.xlsx"
 COMMANDES_FILE = "commandes.csv"
 
@@ -35,63 +38,56 @@ if not any(client_ip.startswith(prefix) for prefix in AUTHORIZED_IP_PREFIXES):
     st.stop()
 
 # ======================
-# FONCTIONS
+# CHARGEMENT DU STOCK (VERSION ULTRA-SIMPLE)
 # ======================
 @st.cache_data(ttl=300)
 def load_excel():
     try:
+        # 1. Lire le fichier Excel
         df = pd.read_excel(EXCEL_FILE)
 
-        if df.empty:
-            st.error("❌ Le fichier Excel est vide.")
-            return pd.DataFrame(columns=["Article", "Stock", "Seuil"])
+        # 2. Nettoyer les données : supprimer les lignes vides
+        df = df.dropna(how='all')  # Supprime les lignes complètement vides
+        df = df.dropna(subset=[df.columns[0]])  # Supprime les lignes où la 1ère colonne est vide
 
-        # Détection automatique des colonnes
-        cols = {col.lower(): col for col in df.columns}
-        available_cols = list(cols.keys())
-
-        # Mapping intelligent
-        article_col = None
-        stock_col = None
-
-        for col in available_cols:
-            if any(word in col for word in ["article", "produit", "nom", "designation", "libellé", "consommable", "matériel", "référence"]):
-                article_col = cols[col]
-            elif any(word in col for word in ["stock", "quantité", "quantite", "dispo", "qte", "qté", "available"]):
-                stock_col = cols[col]
-
-        # Si pas trouvé, utiliser les 2 premières colonnes
-        if not article_col or not stock_col:
-            if len(df.columns) >= 2:
-                article_col = df.columns[0]
-                stock_col = df.columns[1]
-                st.warning(f"⚠️ Colonnes détectées automatiquement : **{article_col}** → Article, **{stock_col}** → Stock")
-            else:
-                st.error("❌ Le fichier doit avoir au moins 2 colonnes.")
-                return pd.DataFrame(columns=["Article", "Stock", "Seuil"])
+        # 3. Prendre les 2 premières colonnes comme Article et Stock
+        if len(df.columns) < 2:
+            st.error("❌ Le fichier doit avoir au moins 2 colonnes !")
+            return pd.DataFrame(columns=["Article", "Stock"])
 
         # Renommer les colonnes
-        df = df.rename(columns={article_col: "Article", stock_col: "Stock"})
+        df = df.rename(columns={
+            df.columns[0]: "Article",
+            df.columns[1]: "Stock"
+        })
 
-        # Ajouter Seuil si absent
-        if "Seuil" not in df.columns:
-            df["Seuil"] = 10
+        # 4. Garder seulement ces 2 colonnes
+        df = df[["Article", "Stock"]]
 
-        return df.dropna(how="all")
+        # 5. Supprimer les lignes où Article ou Stock est vide
+        df = df.dropna()
+
+        # 6. Convertir Stock en nombre
+        df["Stock"] = pd.to_numeric(df["Stock"], errors='coerce')
+
+        return df
 
     except FileNotFoundError:
         st.error(f"❌ Fichier '{EXCEL_FILE}' introuvable !")
         st.markdown("**Solution :** Vérifie que le fichier est dans le même dossier que le script.")
-        return pd.DataFrame(columns=["Article", "Stock", "Seuil"])
+        return pd.DataFrame(columns=["Article", "Stock"])
     except Exception as e:
-        st.error(f"❌ Erreur : {str(e)}")
-        return pd.DataFrame(columns=["Article", "Stock", "Seuil"])
+        st.error(f"❌ Erreur de lecture : {str(e)}")
+        return pd.DataFrame(columns=["Article", "Stock"])
 
+# ======================
+# GESTION DES COMMANDES
+# ======================
 def load_commandes():
     try:
         return pd.read_csv(COMMANDES_FILE)
     except:
-        return pd.DataFrame(columns=["Date", "Utilisateur", "Article", "Quantité", "Commentaire", "Statut"])
+        return pd.DataFrame(columns=["Date", "Utilisateur", "Article", "Quantité", "Statut"])
 
 def save_commandes(df):
     try:
@@ -107,7 +103,7 @@ st.sidebar.title("🧪 GestStock INMED")
 st.sidebar.markdown(f"**IP :** `{client_ip}`")
 st.sidebar.markdown(f"**Date :** {datetime.now().strftime('%d/%m/%Y')}")
 
-mode = st.sidebar.radio("Mode", ["🛒 Passer une commande", "👨‍🔬 Gérer les commandes (Admin)"])
+mode = st.sidebar.radio("Mode", ["🛒 Passer une commande", "👨‍🔬 Gérer les commandes"])
 
 # ======================
 # MODE UTILISATEUR
@@ -117,16 +113,17 @@ if mode == "🛒 Passer une commande":
     st.markdown("---")
 
     stock_df = load_excel()
-    if stock_df.empty or "Article" not in stock_df.columns:
-        st.error("❌ Aucun article disponible.")
+
+    if stock_df.empty:
+        st.error("❌ Aucun article disponible. Vérifie ton fichier Excel.")
         st.stop()
 
     st.subheader("📦 Stock disponible")
-    st.dataframe(stock_df[["Article", "Stock"]], use_container_width=True)
+    st.dataframe(stock_df, use_container_width=True)
 
     st.subheader("✏️ Nouvelle commande")
     with st.form("commande_form"):
-        utilisateur = st.text_input("👤 Nom/Service", placeholder="Labo Biologie")
+        utilisateur = st.text_input("👤 Nom/Service", placeholder="Ex: Labo Biologie")
         article = st.selectbox("📦 Article", stock_df["Article"].tolist())
         quantite = st.number_input("🔢 Quantité", min_value=1, value=1)
         commentaire = st.text_area("💬 Commentaire", placeholder="Optionnel")
@@ -147,7 +144,6 @@ if mode == "🛒 Passer une commande":
                             "Utilisateur": utilisateur,
                             "Article": article,
                             "Quantité": quantite,
-                            "Commentaire": commentaire,
                             "Statut": "⏳ En attente"
                         }])
                     ], ignore_index=True)
@@ -157,7 +153,7 @@ if mode == "🛒 Passer une commande":
 # ======================
 # MODE ADMIN
 # ======================
-elif mode == "👨‍🔬 Gérer les commandes (Admin)":
+elif mode == "👨‍🔬 Gérer les commandes":
     st.title("📊 Gestion des commandes")
     st.markdown("---")
 
@@ -187,6 +183,8 @@ elif mode == "👨‍🔬 Gérer les commandes (Admin)":
                 f"stock_{datetime.now().strftime('%Y%m%d_%H%M')}.xlsx",
                 "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
             )
+    else:
+        st.info("ℹ️ Aucune commande en attente.")
 
     # Historique
     st.subheader("📜 Historique complet")
