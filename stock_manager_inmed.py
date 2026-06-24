@@ -2,7 +2,6 @@ import streamlit as st
 import pandas as pd
 
 # --- CONFIGURATION INITIALE ---
-# On vérifie si la page est déjà configurée pour éviter l'erreur
 if "page_configured" not in st.session_state:
     st.set_page_config(
         page_title="GestStock INMED", 
@@ -23,21 +22,26 @@ st.markdown("""
 st.title("🧪 GestStock INMED")
 st.markdown("### Gestion intuitive de vos consommables plastiques")
 
-# --- CHARGEMENT DES DONNÉES ---
+# --- CHARGEMENT DES DONNÉES (XLSX) ---
 @st.cache_data
 def load_data():
     try:
-        # Assurez-vous que le fichier est bien au format CSV exporté
-        df = pd.read_csv("stock-plastique.xlsx - Feuil1.csv")
-        df["Catégories"] = df["Catégories"].ffill()
+        # Lecture directe du fichier Excel
+        # On suppose que les données sont dans la première feuille (index 0)
+        df = pd.read_excel("stock-plastique.xlsx", sheet_name=0)
+        
+        # Nettoyage : Remplissage des cellules fusionnées dans la colonne Catégories
+        if "Catégories" in df.columns:
+            df["Catégories"] = df["Catégories"].ffill()
         return df
     except Exception as e:
+        st.error(f"Erreur lors de la lecture du fichier Excel : {e}")
         return pd.DataFrame()
 
 df = load_data()
 
 if df.empty:
-    st.error("Impossible de charger les données. Vérifiez la présence du fichier CSV.")
+    st.error("Impossible de charger les données. Vérifiez que 'stock-plastique.xlsx' est bien à la racine du dépôt GitHub.")
 else:
     # --- SIDEBAR FILTRES ---
     st.sidebar.header("🔍 Recherche & Filtres")
@@ -58,7 +62,7 @@ else:
         use_container_width=True, 
         hide_index=True,
         column_config={
-            "Prix ": st.column_config.NumberColumn(format="%.2f €"),
+            "Prix": st.column_config.NumberColumn(format="%.2f €"),
         }
     )
 
