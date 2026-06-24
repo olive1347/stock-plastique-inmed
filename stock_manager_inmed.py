@@ -25,7 +25,7 @@ st.markdown("### Gestion intuitive de vos consommables plastiques")
 @st.cache_data
 def load_data():
     # Chargement du fichier
-    df = pd.read_csv("stock-plastique.xlsx")
+    df = pd.read_xls("stock-plastique.xlsx")
     df["Catégories"] = df["Catégories"].ffill()
     return df
 
