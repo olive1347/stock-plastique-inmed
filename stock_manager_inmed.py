@@ -17,7 +17,7 @@ AUTHORIZED_IP_PREFIXES = [
 ]
 
 # ⬇️ MODIFIÉ : Nouveau nom de fichier
-EXCEL_FILE = "stock-plastique.xls"
+EXCEL_FILE = "stock-plastique.xlsx"
 COMMANDES_FILE = "commandes.csv"
 
 # ══════════════════════════════════════════════════════════════
