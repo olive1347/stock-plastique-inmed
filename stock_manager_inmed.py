@@ -8,10 +8,7 @@ from datetime import datetime
 # ======================
 st.set_page_config(page_title="GestStock INMED", layout="wide")
 
-# Plages IP autorisées
 AUTHORIZED_IP_PREFIXES = ["127.0.0.1", "139.124.", "193.54.", "194.254."]
-
-# Nom du fichier Excel
 EXCEL_FILE = "stock-plastique.xlsx"
 COMMANDES_FILE = "commandes.csv"
 
@@ -38,47 +35,37 @@ if not any(client_ip.startswith(prefix) for prefix in AUTHORIZED_IP_PREFIXES):
     st.stop()
 
 # ======================
-# CHARGEMENT DU STOCK (VERSION ULTRA-SIMPLE)
+# CHARGEMENT DU STOCK
 # ======================
 @st.cache_data(ttl=300)
 def load_excel():
     try:
-        # 1. Lire le fichier Excel
         df = pd.read_excel(EXCEL_FILE)
 
-        # 2. Nettoyer les données : supprimer les lignes vides
-        df = df.dropna(how='all')  # Supprime les lignes complètement vides
-        df = df.dropna(subset=[df.columns[0]])  # Supprime les lignes où la 1ère colonne est vide
+        # Nettoyer les données
+        df = df.dropna(how='all')
+        df = df.dropna(subset=[df.columns[0]])
 
-        # 3. Prendre les 2 premières colonnes comme Article et Stock
-        if len(df.columns) < 2:
-            st.error("❌ Le fichier doit avoir au moins 2 colonnes !")
-            return pd.DataFrame(columns=["Article", "Stock"])
-
-        # Renommer les colonnes
+        # Renommer les 2 premières colonnes
         df = df.rename(columns={
             df.columns[0]: "Article",
             df.columns[1]: "Stock"
         })
 
-        # 4. Garder seulement ces 2 colonnes
-        df = df[["Article", "Stock"]]
-
-        # 5. Supprimer les lignes où Article ou Stock est vide
-        df = df.dropna()
-
-        # 6. Convertir Stock en nombre
+        # Convertir Stock en nombre
         df["Stock"] = pd.to_numeric(df["Stock"], errors='coerce')
+
+        # Supprimer les lignes où Article ou Stock est vide
+        df = df.dropna(subset=["Article", "Stock"])
 
         return df
 
     except FileNotFoundError:
         st.error(f"❌ Fichier '{EXCEL_FILE}' introuvable !")
-        st.markdown("**Solution :** Vérifie que le fichier est dans le même dossier que le script.")
-        return pd.DataFrame(columns=["Article", "Stock"])
+        return pd.DataFrame(columns=["Article", "Stock", "Information", "Cdt", "Catégories"])
     except Exception as e:
-        st.error(f"❌ Erreur de lecture : {str(e)}")
-        return pd.DataFrame(columns=["Article", "Stock"])
+        st.error(f"❌ Erreur : {str(e)}")
+        return pd.DataFrame(columns=["Article", "Stock", "Information", "Cdt", "Catégories"])
 
 # ======================
 # GESTION DES COMMANDES
@@ -87,7 +74,7 @@ def load_commandes():
     try:
         return pd.read_csv(COMMANDES_FILE)
     except:
-        return pd.DataFrame(columns=["Date", "Utilisateur", "Article", "Quantité", "Statut"])
+        return pd.DataFrame(columns=["Date", "Utilisateur", "Article", "Quantité", "Information", "Cdt", "Statut"])
 
 def save_commandes(df):
     try:
@@ -109,7 +96,7 @@ mode = st.sidebar.radio("Mode", ["🛒 Passer une commande", "👨‍🔬 Gérer
 # MODE UTILISATEUR
 # ======================
 if mode == "🛒 Passer une commande":
-    st.title("📝 Passer une commande")
+    st.title("📝 Passer une commande de consommables")
     st.markdown("---")
 
     stock_df = load_excel()
@@ -118,37 +105,64 @@ if mode == "🛒 Passer une commande":
         st.error("❌ Aucun article disponible. Vérifie ton fichier Excel.")
         st.stop()
 
+    # Afficher TOUTES les colonnes utiles (Article, Information, Cdt, Catégories, Stock)
     st.subheader("📦 Stock disponible")
-    st.dataframe(stock_df, use_container_width=True)
 
-    st.subheader("✏️ Nouvelle commande")
+    # Sélectionner les colonnes à afficher (si elles existent)
+    display_columns = ["Article"]
+    for col in ["Information", "Cdt", "Catégories", "Stock"]:
+        if col in stock_df.columns:
+            display_columns.append(col)
+
+    st.dataframe(stock_df[display_columns], use_container_width=True)
+
+    st.subheader("✏️ Ma commande")
     with st.form("commande_form"):
-        utilisateur = st.text_input("👤 Nom/Service", placeholder="Ex: Labo Biologie")
-        article = st.selectbox("📦 Article", stock_df["Article"].tolist())
-        quantite = st.number_input("🔢 Quantité", min_value=1, value=1)
-        commentaire = st.text_area("💬 Commentaire", placeholder="Optionnel")
+        utilisateur = st.text_input("👤 Votre nom ou service", placeholder="Ex: Labo Biologie")
 
-        if st.form_submit_button("📤 Valider"):
+        # Sélection de l'article avec toutes les infos
+        selected_row = st.selectbox(
+            "📦 Sélectionnez un article",
+            options=stock_df.index,
+            format_func=lambda x: f"{stock_df.loc[x, 'Article']} - {stock_df.loc[x, 'Information'] if 'Information' in stock_df.columns else ''} - {stock_df.loc[x, 'Cdt'] if 'Cdt' in stock_df.columns else ''}",
+            index=0
+        )
+
+        quantite = st.number_input(
+            "🔢 Quantité souhaitée",
+            min_value=1,
+            max_value=int(stock_df.loc[selected_row, "Stock"]),
+            value=1
+        )
+
+        commentaire = st.text_area("💬 Commentaire (optionnel)", placeholder="Ex: Urgent pour demain")
+
+        if st.form_submit_button("📤 Valider la commande"):
             if not utilisateur:
-                st.error("❌ Nom obligatoire !")
+                st.error("❌ Veuillez indiquer votre nom ou service.")
             else:
-                stock_dispo = stock_df[stock_df["Article"] == article]["Stock"].values[0]
-                if quantite > stock_dispo:
-                    st.error(f"❌ Stock insuffisant ({stock_dispo} disponibles)")
-                else:
-                    commandes = load_commandes()
-                    commandes = pd.concat([
-                        commandes,
-                        pd.DataFrame([{
-                            "Date": datetime.now().strftime("%Y-%m-%d %H:%M"),
-                            "Utilisateur": utilisateur,
-                            "Article": article,
-                            "Quantité": quantite,
-                            "Statut": "⏳ En attente"
-                        }])
-                    ], ignore_index=True)
-                    save_commandes(commandes)
-                    st.success(f"✅ Commande de {quantite}x {article} enregistrée !")
+                article = stock_df.loc[selected_row, "Article"]
+                info = stock_df.loc[selected_row, "Information"] if "Information" in stock_df.columns else ""
+                cdt = stock_df.loc[selected_row, "Cdt"] if "Cdt" in stock_df.columns else ""
+
+                commandes = load_commandes()
+                commandes = pd.concat([
+                    commandes,
+                    pd.DataFrame([{
+                        "Date": datetime.now().strftime("%Y-%m-%d %H:%M"),
+                        "Utilisateur": utilisateur,
+                        "Article": article,
+                        "Information": info,
+                        "Cdt": cdt,
+                        "Quantité": quantite,
+                        "Commentaire": commentaire,
+                        "Statut": "⏳ En attente"
+                    }])
+                ], ignore_index=True)
+                save_commandes(commandes)
+
+                st.success(f"✅ Commande enregistrée pour {quantite}x {article} !")
+                st.info(f"📋 Détails : {info} - {cdt}")
 
 # ======================
 # MODE ADMIN
@@ -165,10 +179,17 @@ elif mode == "👨‍🔬 Gérer les commandes":
     en_attente = commandes_df[commandes_df["Statut"] == "⏳ En attente"]
 
     if not en_attente.empty:
-        st.dataframe(en_attente, use_container_width=True)
+        # Afficher toutes les colonnes pertinentes
+        admin_display_cols = ["Date", "Utilisateur", "Article", "Information", "Cdt", "Quantité", "Statut"]
+        admin_display_cols = [col for col in admin_display_cols if col in commandes_df.columns]
+        st.dataframe(en_attente[admin_display_cols], use_container_width=True)
+
         if st.button("✅ Valider toutes les commandes", type="primary"):
             for _, row in en_attente.iterrows():
-                stock_df.loc[stock_df["Article"] == row["Article"], "Stock"] -= row["Quantité"]
+                article = row["Article"]
+                quantite = row["Quantité"]
+                if "Article" in stock_df.columns and "Stock" in stock_df.columns:
+                    stock_df.loc[stock_df["Article"] == article, "Stock"] -= quantite
                 commandes_df.loc[commandes_df.index == row.name, "Statut"] = "✅ Validée"
             save_commandes(commandes_df)
             st.success(f"✅ {len(en_attente)} commandes validées !")
@@ -186,13 +207,15 @@ elif mode == "👨‍🔬 Gérer les commandes":
     else:
         st.info("ℹ️ Aucune commande en attente.")
 
-    # Historique
-    st.subheader("📜 Historique complet")
-    st.dataframe(commandes_df, use_container_width=True)
+    # Historique complet
+    st.subheader("📜 Historique des commandes")
     if not commandes_df.empty:
+        st.dataframe(commandes_df, use_container_width=True)
         st.download_button(
             "📥 Télécharger historique (CSV)",
             commandes_df.to_csv(index=False).encode(),
             f"historique_{datetime.now().strftime('%Y%m%d_%H%M')}.csv",
             "text/csv"
         )
+    else:
+        st.info("ℹ️ Aucune commande enregistrée.")
