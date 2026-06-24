@@ -16,8 +16,8 @@ AUTHORIZED_IP_PREFIXES = [
     "194.254."
 ]
 
-# Fichiers
-EXCEL_FILE = "Fiche demande labo plastique 2025-2026.xlsx"
+# ⬇️ MODIFIÉ : Nouveau nom de fichier
+EXCEL_FILE = "stock-plastique.xls"
 COMMANDES_FILE = "commandes.csv"
 
 # ══════════════════════════════════════════════════════════════
@@ -51,7 +51,7 @@ if not verify_ip(client_ip):
 @st.cache_data(ttl=300)
 def load_excel():
     try:
-        # 1. Charger le fichier Excel
+        # 1. Charger le fichier Excel (.xls ou .xlsx)
         df = pd.read_excel(EXCEL_FILE)
 
         if df.empty:
@@ -104,9 +104,9 @@ def load_excel():
 
     except FileNotFoundError:
         st.error(f"❌ **FICHIER INTRUVABLE** : '{EXCEL_FILE}' n'existe pas dans le dossier.")
-        st.markdown("""
+        st.markdown(f"""
         **Solution :**
-        1. Vérifie que le fichier s'appelle exactement `Fiche demande labo plastique 2025-2026.xlsx`
+        1. Vérifie que le fichier s'appelle exactement **`{EXCEL_FILE}`**
         2. Place-le dans le même dossier que `stock_manager_inmed.py`
         3. Redémarre l'application
         """)
