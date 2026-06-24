@@ -78,6 +78,7 @@ def verify_ip_strict(ip):
 client_ip, client_headers = get_client_ip_details()
 is_access_granted = verify_ip_strict(client_ip)
 
+st.write(f"DEBUG - IP détectée : {client_ip}")
 if not is_access_granted:
     st.markdown(
         f"""
