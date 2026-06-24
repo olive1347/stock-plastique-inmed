@@ -40,7 +40,7 @@ st.title("Inventaire des Consommables Plastiques")
 
 try:
     # Le fichier CSV généré depuis votre fichier stock-plastique.xlsx
-    df = pd.read_csv("stock-plastique.xlsx - Feuil1.csv")
+    df = pd.read_csv("stock-plastique.xlsx")
     
     # Nettoyage : Remplir les cellules vides de "Catégories" pour regrouper les articles
     if "Catégories" in df.columns:
