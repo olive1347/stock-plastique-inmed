@@ -26,11 +26,16 @@ st.markdown("""
 @st.cache_data
 def load_data():
     df = pd.read_excel("stock-plastique.xlsx", sheet_name=0)
+    
+    # Correction des NaN : on propage la valeur du haut vers le bas
     if "Catégories" in df.columns:
         df["Catégories"] = df["Catégories"].ffill()
+        
+    # Optionnel : On peut aussi supprimer les lignes où la désignation est vide 
+    # pour nettoyer l'affichage des lignes de séparation vides
+    df = df.dropna(subset=['Designation'])
+    
     return df
-
-df = load_data()
 
 # --- HEADER ---
 st.title("🧪 GestStock INMED")
