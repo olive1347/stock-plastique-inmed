@@ -21,7 +21,8 @@ DEFAULT_COLUMNS = ["id", "categorie", "designation", "reference", "quantite", "s
 # ==============================================================================
 
 AUTHORIZED_IP_PREFIXES = [
-    "139.124.",   
+    "139.124.", 
+    "139.",
     "193.54.",    
     "194.254."    
 ]
