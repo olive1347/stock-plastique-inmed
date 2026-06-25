@@ -1,38 +1,67 @@
 import streamlit as st
 import pandas as pd
-import gspread
-from google.oauth2.service_account import Credentials
 
-# --- CONFIGURATION GOOGLE SHEETS ---
-# Vous devrez configurer ces secrets dans Streamlit Cloud (Advanced Settings > Secrets)
-# Exemple de contenu à mettre dans les secrets :
-# GOOGLE_SHEETS_CREDENTIALS = {"type": "service_account", "project_id": "...", ...}
-# SPREADSHEET_ID = "votre_id_de_feuille_google"
+# CONFIGURATION
+# Remplacez ce lien par le lien CSV généré par "Publier sur le web" de votre Google Sheet
+SHEET_URL = "https://docs.google.com/spreadsheets/d/e/2PACX-1vT6j8ofGR_sogNbwOjGZaX3v7KsswlNiXcIjjDBA5p8gg8SDyUmXBOgr0lGGu3G9SDkqytF_GBCXNMb/pub?output=csv"
 
-def get_connection():
-    creds_dict = st.secrets["GOOGLE_SHEETS_CREDENTIALS"]
-    creds = Credentials.from_service_account_info(creds_dict)
-    gc = gspread.authorize(creds)
-    return gc
-
+# Fonction pour charger les données avec mise en cache
+@st.cache_data(ttl=60)
 def load_data():
-    gc = get_connection()
-    sh = gc.open_by_key(st.secrets["SPREADSHEET_ID"])
-    worksheet = sh.get_worksheet(0)
-    data = worksheet.get_all_records()
-    return pd.DataFrame(data)
+    try:
+        return pd.read_csv(SHEET_URL)
+    except Exception as e:
+        st.error(f"Erreur lors du chargement : {e}")
+        return pd.DataFrame()
 
-def save_data(df):
-    gc = get_connection()
-    sh = gc.open_by_key(st.secrets["SPREADSHEET_ID"])
-    worksheet = sh.get_worksheet(0)
-    worksheet.clear()
-    worksheet.update([df.columns.values.tolist()] + df.values.tolist())
+# Configuration de la page
+st.set_page_config(page_title="GestStock INMED", page_icon="🧪", layout="wide")
+st.title("🧪 GestStock INMED")
 
-# --- INTERFACE (Reste similaire au précédent) ---
-st.title("🧪 GestStock INMED (Sync Google Sheets)")
 df = load_data()
 
+# Création des onglets
 tab_cmd, tab_gest = st.tabs(["🛒 Commander", "🛠️ Gestion Inventaire"])
 
-# ... (Le reste du code de commande et d'inventaire est identique)
+with tab_cmd:
+    st.subheader("Passer une commande")
+    if not df.empty:
+        # Filtre par catégorie
+        cats = ["Toutes"] + df['Catégorie'].dropna().unique().tolist()
+        cat_select = st.selectbox("1. Choisir une catégorie :", cats)
+        
+        filtered_df = df if cat_select == "Toutes" else df[df['Catégorie'] == cat_select]
+        
+        # Sélection de l'article
+        selected_idx = st.selectbox(
+            "2. Choisir un article :", 
+            options=filtered_df.index, 
+            format_func=lambda x: f"{filtered_df.loc[x, 'Désignation']} ({filtered_df.loc[x, 'Informations']})"
+        )
+        
+        if selected_idx is not None:
+            item = filtered_df.loc[selected_idx]
+            st.info(f"**Article :** {item['Désignation']} | **Cond :** {item['Conditionnement']}")
+            
+            qty = st.number_input("Quantité", min_value=1, value=1)
+            nom = st.text_input("Votre Nom")
+            
+            if st.button("🚀 Envoyer la commande"):
+                if nom:
+                    st.success(f"Commande de {qty} x {item['Désignation']} envoyée par {nom} !")
+                else:
+                    st.warning("Veuillez renseigner votre nom.")
+    else:
+        st.warning("Données non chargées. Vérifiez le lien du Google Sheet.")
+
+with tab_gest:
+    st.subheader("🛠️ Édition du Stock")
+    st.write("Pour modifier les stocks, modifiez directement votre fichier Google Sheet original.")
+    if not df.empty:
+        st.dataframe(df, use_container_width=True)
+    
+    if st.button("🔄 Rafraîchir les données"):
+        st.rerun()
+
+st.sidebar.markdown("---")
+st.sidebar.info("Note : Les modifications doivent être faites dans le Google Sheet source.")
