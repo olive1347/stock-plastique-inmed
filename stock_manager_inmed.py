@@ -1,66 +1,80 @@
 import streamlit as st
 import pandas as pd
+import os
 
 # --- CONFIGURATION ---
+DATA_FILE = "stock_inmed.csv"
+
 if "page_configured" not in st.session_state:
-    st.set_page_config(page_title="GestStock INMED", page_icon="🧪", layout="centered")
+    st.set_page_config(page_title="GestStock INMED", page_icon="🧪", layout="wide")
     st.session_state.page_configured = True
 
-# --- DONNÉES ---
-@st.cache_data
+# --- GESTION DES DONNÉES ---
 def load_data():
-    try:
-        df = pd.read_excel("stock-plastique.xlsx", sheet_name=0)
-        # Nettoyage robuste des données
-        if "Catégories" in df.columns:
-            df["Catégories"] = df["Catégories"].ffill()
-        # Suppression des lignes vides inutiles
-        df = df.dropna(subset=['Designation'])
-        return df
-    except Exception as e:
-        st.error(f"Erreur de chargement : {e}")
-        return pd.DataFrame()
+    if os.path.exists(DATA_FILE):
+        return pd.read_csv(DATA_FILE)
+    else:
+        # Template de base si le fichier n'existe pas
+        return pd.DataFrame(columns=['Catégorie', 'Désignation', 'Informations', 'Fabricant', 'Prix'])
 
+def save_data(df):
+    df.to_csv(DATA_FILE, index=False)
+
+# --- INTERFACE ---
+st.title("🧪 GestStock INMED")
+
+# Chargement
 df = load_data()
 
-# --- HEADER ---
-st.title("🧪 GestStock INMED")
-st.subheader("Sélectionnez vos consommables")
+# Onglets
+tab_cmd, tab_gest = st.tabs(["🛒 Commander", "🛠️ Gestion Inventaire"])
 
-if not df.empty:
-    # 1. Sélection de la catégorie
-    categories = df["Catégories"].unique()
-    selected_cat = st.selectbox("📂 Choisissez une catégorie :", categories)
-
-    # 2. Filtrage des articles selon la catégorie
-    articles_in_cat = df[df["Catégories"] == selected_cat]
-    
-    # 3. Sélection de l'article
-    # On crée une liste de tuples pour afficher "Désignation - Informations"
-    article_options = articles_in_cat["Designation"].tolist()
-    selected_art = st.selectbox("🧪 Choisissez l'article :", article_options)
-
-    # Récupération des infos de l'article sélectionné
-    article_info = articles_in_cat[articles_in_cat["Designation"] == selected_art].iloc[0]
-    
-    # Affichage des détails techniques
-    st.info(f"**Détails :** {article_info['Informations']} | **Fabricant :** {article_info['Fabricant']}")
-
-    st.write("---")
-
-    # --- FORMULAIRE DE COMMANDE ---
-    st.header("📝 Nouvelle Commande")
-    with st.form("cmd_form"):
-        col_c1, col_c2 = st.columns(2)
-        with col_c1:
-            nom = st.text_input("Demandeur")
-        with col_c2:
-            qte = st.number_input("Quantité", min_value=1, value=1)
+# --- TAB 1 : COMMANDE ---
+with tab_cmd:
+    st.subheader("Passer une commande")
+    if not df.empty:
+        # Listes déroulantes pour simplifier
+        cats = ["Toutes"] + df['Catégorie'].dropna().unique().tolist()
+        cat_select = st.selectbox("1. Choisir une catégorie :", cats)
         
-        if st.form_submit_button("🚀 Envoyer la commande"):
-            if nom:
-                st.success(f"Commande de {qte} x {selected_art} enregistrée pour {nom}.")
-            else:
-                st.warning("Veuillez indiquer votre nom.")
-else:
-    st.error("Aucune donnée trouvée dans le fichier Excel.")
+        filtered_df = df if cat_select == "Toutes" else df[df['Catégorie'] == cat_select]
+        
+        designations = filtered_df['Désignation'].unique().tolist()
+        art_select = st.selectbox("2. Choisir un article :", designations)
+        
+        # Détails auto
+        if art_select:
+            item = df[df['Désignation'] == art_select].iloc[0]
+            st.info(f"**Info :** {item['Informations']} | **Fabricant :** {item['Fabricant']} | **Prix :** {item['Prix']}€")
+            
+            qty = st.number_input("Quantité", min_value=1, value=1)
+            nom = st.text_input("Votre Nom")
+            
+            if st.button("🚀 Envoyer la commande"):
+                if nom:
+                    st.success(f"Commande de {qty} x {art_select} envoyée !")
+                else:
+                    st.warning("Indiquez votre nom svp.")
+    else:
+        st.warning("L'inventaire est vide. Passez par l'onglet 'Gestion Inventaire' pour ajouter des produits.")
+
+# --- TAB 2 : GESTION INVENTAIRE (Admin) ---
+with tab_gest:
+    st.subheader("🛠️ Édition du Stock")
+    st.write("Modifiez directement le tableau ci-dessous. Les changements sont enregistrés au clic sur le bouton.")
+    
+    # Éditeur interactif
+    edited_df = st.data_editor(
+        df, 
+        num_rows="dynamic", 
+        use_container_width=True,
+        key="editor"
+    )
+    
+    if st.button("💾 Sauvegarder les modifications"):
+        save_data(edited_df)
+        st.success("Inventaire mis à jour avec succès !")
+        st.rerun()
+
+st.sidebar.markdown("---")
+st.sidebar.info("Responsable stock : Olivier Lassalle")
