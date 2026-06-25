@@ -5,22 +5,22 @@ import os
 # --- CONFIGURATION ---
 DATA_FILE = "stock_inmed.csv"
 
-if "page_configured" not in st.session_state:
-    st.set_page_config(page_title="GestStock INMED", page_icon="🧪", layout="wide")
-    st.session_state.page_configured = True
+st.set_page_config(page_title="GestStock INMED", page_icon="🧪", layout="wide")
 
 # --- GESTION DES DONNÉES ---
 def load_data():
     if os.path.exists(DATA_FILE):
         df = pd.read_csv(DATA_FILE)
-        # Assurer que les colonnes nécessaires existent
-        if 'Conditionnement' not in df.columns:
-            df['Conditionnement'] = ""
-        # Supprimer la colonne Prix si elle existe
+        # Nettoyage automatique des colonnes
         if 'Prix' in df.columns:
             df = df.drop(columns=['Prix'])
+        if 'Conditionnement' not in df.columns:
+            df['Conditionnement'] = ""
+        # On s'assure qu'il n'y a pas de lignes vides gênantes
+        df = df.dropna(subset=['Désignation'])
         return df
     else:
+        # Création d'une structure vide par défaut
         return pd.DataFrame(columns=['Catégorie', 'Désignation', 'Informations', 'Conditionnement', 'Fabricant', 'Ref fabricant', 'Ref UGAP'])
 
 def save_data(df):
@@ -29,7 +29,7 @@ def save_data(df):
 # --- INTERFACE ---
 st.title("🧪 GestStock INMED")
 
-# Chargement
+# Chargement des données
 df = load_data()
 
 # Onglets
@@ -39,34 +39,41 @@ tab_cmd, tab_gest = st.tabs(["🛒 Commander", "🛠️ Gestion Inventaire"])
 with tab_cmd:
     st.subheader("Passer une commande")
     if not df.empty:
+        # Sélection catégorie
         cats = ["Toutes"] + df['Catégorie'].dropna().unique().tolist()
         cat_select = st.selectbox("1. Choisir une catégorie :", cats)
         
         filtered_df = df if cat_select == "Toutes" else df[df['Catégorie'] == cat_select]
         
-        designations = filtered_df['Désignation'].unique().tolist()
-        art_select = st.selectbox("2. Choisir un article :", designations)
+        # Sélection article avec le correctif pour les doublons
+        st.write("2. Choisir un article :")
+        selected_index = st.selectbox(
+            "Article", 
+            options=filtered_df.index, 
+            format_func=lambda x: f"{filtered_df.loc[x, 'Désignation']} ({filtered_df.loc[x, 'Informations']})"
+        )
         
-        if art_select:
-            item = df[df['Désignation'] == art_select].iloc[0]
-            st.info(f"**Info :** {item['Informations']} | **Cond. :** {item['Conditionnement']} | **Fabricant :** {item['Fabricant']}")
+        if selected_index is not None:
+            item = df.loc[selected_index]
+            st.info(f"**Article :** {item['Désignation']} | **Info :** {item['Informations']} | **Cond. :** {item['Conditionnement']} | **Fabricant :** {item['Fabricant']}")
             
             qty = st.number_input("Quantité", min_value=1, value=1)
             nom = st.text_input("Votre Nom")
             
             if st.button("🚀 Envoyer la commande"):
                 if nom:
-                    st.success(f"Commande de {qty} x {art_select} envoyée !")
+                    st.success(f"Commande de {qty} x {item['Désignation']} ({item['Informations']}) enregistrée !")
                 else:
-                    st.warning("Indiquez votre nom svp.")
+                    st.warning("Veuillez indiquer votre nom.")
     else:
-        st.warning("L'inventaire est vide. Passez par l'onglet 'Gestion Inventaire' pour ajouter des produits.")
+        st.warning("L'inventaire est vide. Utilisez l'onglet 'Gestion Inventaire' pour ajouter vos produits.")
 
 # --- TAB 2 : GESTION INVENTAIRE ---
 with tab_gest:
     st.subheader("🛠️ Édition du Stock")
-    st.write("Modifiez votre inventaire. La colonne 'Prix' a été supprimée et 'Conditionnement' ajoutée.")
+    st.write("Modifiez, ajoutez ou supprimez des articles ici. Cliquez sur 'Sauvegarder' pour appliquer.")
     
+    # Éditeur interactif
     edited_df = st.data_editor(
         df, 
         num_rows="dynamic", 
