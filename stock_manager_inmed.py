@@ -3,82 +3,64 @@ import pandas as pd
 
 # --- CONFIGURATION ---
 if "page_configured" not in st.session_state:
-    st.set_page_config(page_title="GestStock INMED", page_icon="🧪", layout="wide")
+    st.set_page_config(page_title="GestStock INMED", page_icon="🧪", layout="centered")
     st.session_state.page_configured = True
-
-# --- STYLE CSS PERSONNALISÉ ---
-st.markdown("""
-    <style>
-    .card {
-        background-color: #ffffff;
-        padding: 15px;
-        border-radius: 10px;
-        border: 1px solid #e2e8f0;
-        margin-bottom: 10px;
-        box-shadow: 2px 2px 5px rgba(0,0,0,0.05);
-    }
-    .designation { font-weight: bold; color: #1e293b; font-size: 1.1em; }
-    .info { color: #64748b; font-size: 0.9em; }
-    </style>
-""", unsafe_allow_html=True)
 
 # --- DONNÉES ---
 @st.cache_data
 def load_data():
-    df = pd.read_excel("stock-plastique.xlsx", sheet_name=0)
-    if "Catégories" in df.columns:
-        df["Catégories"] = df["Catégories"].ffill()
-    return df
+    try:
+        df = pd.read_excel("stock-plastique.xlsx", sheet_name=0)
+        # Nettoyage robuste des données
+        if "Catégories" in df.columns:
+            df["Catégories"] = df["Catégories"].ffill()
+        # Suppression des lignes vides inutiles
+        df = df.dropna(subset=['Designation'])
+        return df
+    except Exception as e:
+        st.error(f"Erreur de chargement : {e}")
+        return pd.DataFrame()
 
 df = load_data()
 
 # --- HEADER ---
 st.title("🧪 GestStock INMED")
-st.subheader("Catalogue de consommables")
+st.subheader("Sélectionnez vos consommables")
 
-# --- RECHERCHE ---
-col_s1, col_s2 = st.columns([1, 3])
-with col_s1:
-    search = st.text_input("🔍 Rechercher un article...")
-
-# --- AFFICHAGE PAR CATÉGORIES ---
 if not df.empty:
+    # 1. Sélection de la catégorie
     categories = df["Catégories"].unique()
+    selected_cat = st.selectbox("📂 Choisissez une catégorie :", categories)
+
+    # 2. Filtrage des articles selon la catégorie
+    articles_in_cat = df[df["Catégories"] == selected_cat]
     
-    for cat in categories:
-        # Filtrage
-        articles_cat = df[df["Catégories"] == cat]
-        if search:
-            articles_cat = articles_cat[articles_cat["Designation"].str.contains(search, case=False, na=False)]
+    # 3. Sélection de l'article
+    # On crée une liste de tuples pour afficher "Désignation - Informations"
+    article_options = articles_in_cat["Designation"].tolist()
+    selected_art = st.selectbox("🧪 Choisissez l'article :", article_options)
+
+    # Récupération des infos de l'article sélectionné
+    article_info = articles_in_cat[articles_in_cat["Designation"] == selected_art].iloc[0]
+    
+    # Affichage des détails techniques
+    st.info(f"**Détails :** {article_info['Informations']} | **Fabricant :** {article_info['Fabricant']}")
+
+    st.write("---")
+
+    # --- FORMULAIRE DE COMMANDE ---
+    st.header("📝 Nouvelle Commande")
+    with st.form("cmd_form"):
+        col_c1, col_c2 = st.columns(2)
+        with col_c1:
+            nom = st.text_input("Demandeur")
+        with col_c2:
+            qte = st.number_input("Quantité", min_value=1, value=1)
         
-        if not articles_cat.empty:
-            with st.expander(f"📂 {cat}", expanded=True):
-                # Utilisation de colonnes pour une vue catalogue
-                cols = st.columns(2)
-                for idx, (_, row) in enumerate(articles_cat.iterrows()):
-                    with cols[idx % 2]:
-                        st.markdown(f"""
-                        <div class="card">
-                            <div class="designation">{row['Designation']}</div>
-                            <div class="info">{row['Informations']} | {row['Fabricant']}</div>
-                        </div>
-                        """, unsafe_allow_html=True)
-
-st.write("---")
-
-# --- FORMULAIRE DE COMMANDE ---
-st.header("📝 Nouvelle Commande")
-with st.form("cmd_form"):
-    c1, c2, c3 = st.columns(3)
-    with c1:
-        nom = st.text_input("Demandeur")
-    with c2:
-        art = st.selectbox("Article", df["Designation"].dropna().unique())
-    with c3:
-        qte = st.number_input("Quantité", min_value=1, value=1)
-    
-    if st.form_submit_button("🚀 Envoyer la commande"):
-        if nom:
-            st.success(f"Commande de {qte} x {art} enregistrée pour {nom}.")
-        else:
-            st.warning("Veuillez indiquer votre nom.")
+        if st.form_submit_button("🚀 Envoyer la commande"):
+            if nom:
+                st.success(f"Commande de {qte} x {selected_art} enregistrée pour {nom}.")
+            else:
+                st.warning("Veuillez indiquer votre nom.")
+else:
+    st.error("Aucune donnée trouvée dans le fichier Excel.")
