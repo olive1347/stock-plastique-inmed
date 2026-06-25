@@ -12,10 +12,16 @@ if "page_configured" not in st.session_state:
 # --- GESTION DES DONNÉES ---
 def load_data():
     if os.path.exists(DATA_FILE):
-        return pd.read_csv(DATA_FILE)
+        df = pd.read_csv(DATA_FILE)
+        # Assurer que les colonnes nécessaires existent
+        if 'Conditionnement' not in df.columns:
+            df['Conditionnement'] = ""
+        # Supprimer la colonne Prix si elle existe
+        if 'Prix' in df.columns:
+            df = df.drop(columns=['Prix'])
+        return df
     else:
-        # Template de base si le fichier n'existe pas
-        return pd.DataFrame(columns=['Catégorie', 'Désignation', 'Informations', 'Fabricant', 'Prix'])
+        return pd.DataFrame(columns=['Catégorie', 'Désignation', 'Informations', 'Conditionnement', 'Fabricant', 'Ref fabricant', 'Ref UGAP'])
 
 def save_data(df):
     df.to_csv(DATA_FILE, index=False)
@@ -33,7 +39,6 @@ tab_cmd, tab_gest = st.tabs(["🛒 Commander", "🛠️ Gestion Inventaire"])
 with tab_cmd:
     st.subheader("Passer une commande")
     if not df.empty:
-        # Listes déroulantes pour simplifier
         cats = ["Toutes"] + df['Catégorie'].dropna().unique().tolist()
         cat_select = st.selectbox("1. Choisir une catégorie :", cats)
         
@@ -42,10 +47,9 @@ with tab_cmd:
         designations = filtered_df['Désignation'].unique().tolist()
         art_select = st.selectbox("2. Choisir un article :", designations)
         
-        # Détails auto
         if art_select:
             item = df[df['Désignation'] == art_select].iloc[0]
-            st.info(f"**Info :** {item['Informations']} | **Fabricant :** {item['Fabricant']} | **Prix :** {item['Prix']}€")
+            st.info(f"**Info :** {item['Informations']} | **Cond. :** {item['Conditionnement']} | **Fabricant :** {item['Fabricant']}")
             
             qty = st.number_input("Quantité", min_value=1, value=1)
             nom = st.text_input("Votre Nom")
@@ -58,12 +62,11 @@ with tab_cmd:
     else:
         st.warning("L'inventaire est vide. Passez par l'onglet 'Gestion Inventaire' pour ajouter des produits.")
 
-# --- TAB 2 : GESTION INVENTAIRE (Admin) ---
+# --- TAB 2 : GESTION INVENTAIRE ---
 with tab_gest:
     st.subheader("🛠️ Édition du Stock")
-    st.write("Modifiez directement le tableau ci-dessous. Les changements sont enregistrés au clic sur le bouton.")
+    st.write("Modifiez votre inventaire. La colonne 'Prix' a été supprimée et 'Conditionnement' ajoutée.")
     
-    # Éditeur interactif
     edited_df = st.data_editor(
         df, 
         num_rows="dynamic", 
