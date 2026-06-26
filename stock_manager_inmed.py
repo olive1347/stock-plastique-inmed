@@ -1,6 +1,5 @@
 import streamlit as st
 import pandas as pd
-import time
 
 # CONFIGURATION
 SHEET_URL = "https://docs.google.com/spreadsheets/d/e/2PACX-1vT6j8ofGR_sogNbwOjGZaX3v7KsswlNiXcIjjDBA5p8gg8SDyUmXBOgr0lGGu3G9SDkqytF_GBCXNMb/pub?output=csv"
@@ -37,24 +36,24 @@ else:
             # On filtre en gardant l'index d'origine du fichier
             filtered_df = data if cat_select == "Toutes" else data[data['Catégorie'] == cat_select]
             
-            # Ici, on crée un menu qui affiche la Désignation + Cond, 
-            # mais on stocke l'index de la ligne (x) comme valeur de retour du selectbox
+            # Création du menu : On ajoute l'index (i) à l'affichage pour garantir l'unicité
+            # et on utilise cet index pour récupérer la ligne exacte dans le dataframe principal 'data'
             selected_idx = st.selectbox(
                 "2. Choisir un article :", 
                 options=filtered_df.index, 
-                format_func=lambda x: f"{filtered_df.loc[x, 'Désignation']} — [{filtered_df.loc[x, 'Conditionnement']}]"
+                format_func=lambda i: f"{filtered_df.loc[i, 'Désignation']} — [{filtered_df.loc[i, 'Conditionnement']}] (Ligne {i+2})"
             )
             
             if selected_idx is not None:
-                # On récupère les infos depuis l'index précis (selected_idx)
-                # Cela garantit de toujours lire la bonne ligne du CSV
+                # Récupération sécurisée et directe par index absolu
                 item = data.loc[selected_idx]
                 
-                # Affichage des informations liées à CET index précis
+                # Affichage des informations liées UNIQUEMENT à cette ligne
                 st.info(f"**Informations sur l'article :**\n\n{item.get('Informations', 'Aucune information disponible.')}")
                 
                 qty = st.number_input("Quantité", min_value=1, value=1)
                 nom = st.text_input("Votre Nom")
+                
                 if st.button("🚀 Envoyer la commande"):
                     if nom:
                         st.success(f"Commande de {qty} x {item['Désignation']} envoyée par {nom} !")
