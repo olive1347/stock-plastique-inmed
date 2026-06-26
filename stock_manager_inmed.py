@@ -3,7 +3,7 @@ import pandas as pd
 
 # CONFIGURATION
 SHEET_URL = "https://docs.google.com/spreadsheets/d/e/2PACX-1vT6j8ofGR_sogNbwOjGZaX3v7KsswlNiXcIjjDBA5p8gg8SDyUmXBOgr0lGGu3G9SDkqytF_GBCXNMb/pub?output=csv"
-MOT_DE_PASSE_GESTION = "INMED2026" # Vous pouvez modifier ce mot de passe ici
+MOT_DE_PASSE_GESTION = "INMED2026" 
 
 @st.cache_data(ttl=60)
 def load_data(reload_trigger):
@@ -16,7 +16,6 @@ def load_data(reload_trigger):
 st.set_page_config(page_title="GestStock INMED", page_icon="🧪", layout="wide")
 st.title("🧪 GestStock INMED")
 
-# Initialisation session state
 if 'reload_key' not in st.session_state:
     st.session_state.reload_key = 0
 if 'auth_gest' not in st.session_state:
@@ -44,15 +43,22 @@ else:
                 filtered_df = filtered_df[filtered_df['Désignation'].str.contains(search_query, case=False, na=False)]
             
             if not filtered_df.empty:
+                # Menu de sélection : Désignation + Informations
                 selected_idx = st.selectbox(
                     "3. Choisir un article :", 
                     options=filtered_df.index, 
-                    format_func=lambda i: f"{filtered_df.loc[i, 'Désignation']} — [{filtered_df.loc[i, 'Conditionnement']}] (Ligne {i+2})"
+                    format_func=lambda i: f"{filtered_df.loc[i, 'Désignation']} — {filtered_df.loc[i, 'Informations']} (Ligne {i+2})"
                 )
                 
                 if selected_idx is not None:
                     item = data.loc[selected_idx]
-                    st.info(f"**Informations sur l'article :**\n\n{item.get('Informations', 'Aucune information disponible.')}")
+                    
+                    # Encart bleu : Conditionnement et Fabricant uniquement
+                    st.info(f"""
+                    ### 📦 Détails logistiques
+                    - **Conditionnement :** {item.get('Conditionnement', 'N/A')}
+                    - **Fabricant :** {item.get('Fabricant', 'N/A')}
+                    """)
                     
                     qty = st.number_input("Quantité", min_value=1, value=1)
                     nom = st.text_input("Votre Nom")
@@ -64,28 +70,22 @@ else:
                             st.warning("Veuillez renseigner votre nom.")
             else:
                 st.warning("Aucun article ne correspond à votre recherche.")
+        else:
+            st.error("Colonnes manquantes dans votre fichier.")
 
     with tab_gest:
         st.subheader("🛠️ Édition du Stock")
-        
-        # Vérification du mot de passe
         if not st.session_state.auth_gest:
-            password = st.text_input("🔑 Mot de passe requis pour accéder à la gestion :", type="password")
+            password = st.text_input("🔑 Mot de passe requis :", type="password")
             if st.button("Valider"):
                 if password == MOT_DE_PASSE_GESTION:
                     st.session_state.auth_gest = True
                     st.rerun()
-                else:
-                    st.error("Mot de passe incorrect.")
         else:
             if st.button("🔒 Se déconnecter"):
                 st.session_state.auth_gest = False
                 st.rerun()
-            
             st.dataframe(data, use_container_width=True)
             if st.button("🔄 Rafraîchir les données"):
                 st.session_state.reload_key += 1
                 st.rerun()
-
-st.sidebar.markdown("---")
-st.sidebar.info("Note : Les modifications doivent être faites dans le Google Sheet source.")
