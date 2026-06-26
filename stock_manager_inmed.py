@@ -34,25 +34,23 @@ else:
             cats = ["Toutes"] + data['Catégorie'].dropna().unique().tolist()
             cat_select = st.selectbox("1. Choisir une catégorie :", cats)
             
+            # On filtre en gardant l'index d'origine du fichier
             filtered_df = data if cat_select == "Toutes" else data[data['Catégorie'] == cat_select]
             
-            # Menu déroulant enrichi pour le choix
-            def format_func(idx):
-                item = filtered_df.loc[idx]
-                cond = item.get('Conditionnement', '')
-                ref = item.get('Ref fabricant', '')
-                return f"{item['Désignation']} — [{cond}] (Réf: {ref})"
-
+            # Ici, on crée un menu qui affiche la Désignation + Cond, 
+            # mais on stocke l'index de la ligne (x) comme valeur de retour du selectbox
             selected_idx = st.selectbox(
                 "2. Choisir un article :", 
                 options=filtered_df.index, 
-                format_func=format_func
+                format_func=lambda x: f"{filtered_df.loc[x, 'Désignation']} — [{filtered_df.loc[x, 'Conditionnement']}]"
             )
             
             if selected_idx is not None:
-                item = filtered_df.loc[selected_idx]
+                # On récupère les infos depuis l'index précis (selected_idx)
+                # Cela garantit de toujours lire la bonne ligne du CSV
+                item = data.loc[selected_idx]
                 
-                # Affichage épuré : uniquement la colonne Informations
+                # Affichage des informations liées à CET index précis
                 st.info(f"**Informations sur l'article :**\n\n{item.get('Informations', 'Aucune information disponible.')}")
                 
                 qty = st.number_input("Quantité", min_value=1, value=1)
