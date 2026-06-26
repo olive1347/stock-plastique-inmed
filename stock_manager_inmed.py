@@ -4,7 +4,7 @@ import smtplib
 from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
 
-# --- STREAMING_CHUNK: Configuration et Initialisation ---
+# --- CONFIGURATION ---
 SHEET_URL = "https://docs.google.com/spreadsheets/d/e/2PACX-1vT6j8ofGR_sogNbwOjGZaX3v7KsswlNiXcIjjDBA5p8gg8SDyUmXBOgr0lGGu3G9SDkqytF_GBCXNMb/pub?output=csv"
 MOT_DE_PASSE_GESTION = "INMED2026" 
 
@@ -16,7 +16,7 @@ def load_data(reload_trigger):
     except Exception as e:
         return str(e)
 
-# --- STREAMING_CHUNK: Fonction d'envoi d'e-mail groupé ---
+# --- FONCTION D'ENVOI D'E-MAIL ---
 def send_basket_email(nom, basket):
     destinataire = "olivier.lassalle@inserm.fr"
     sender = st.secrets.get("INSERM_EMAIL", "olivier.lassalle@inserm.fr")
@@ -25,11 +25,15 @@ def send_basket_email(nom, basket):
     msg = MIMEMultipart()
     msg['From'] = sender
     msg['To'] = destinataire
-    msg['Subject'] = f"🧪 Nouvelle demande de matériel (Panier) - {nom}"
+    msg['Subject'] = f"🧪 Nouvelle demande de matériel - {nom}"
     
     html_items = ""
     for item in basket:
-        html_items += f"<li><b>{item['designation']}</b> : {item['qty']} x (Cdt: {item['cond']})</li>"
+        # Intégration de la colonne Informations dans le mail
+        html_items += f"""
+        <li><b>{item['designation']}</b> : {item['qty']} x (Cdt: {item['cond']})<br>
+        <small style="color:gray;">Info: {item['info']}</small></li><br>
+        """
     
     body = f"""
     <h2>Nouvelle demande de matériel Plastique</h2>
@@ -51,7 +55,7 @@ def send_basket_email(nom, basket):
         st.error(f"Erreur d'envoi : {e}")
         return False
 
-# --- STREAMING_CHUNK: Interface principale ---
+# --- INTERFACE PRINCIPALE ---
 st.set_page_config(page_title="Demande plastique - INMED", page_icon="🧪", layout="wide")
 st.title("🧪 Demande plastique - INMED")
 
@@ -70,7 +74,6 @@ else:
 
     with tab_cmd:
         st.subheader("Passer une commande")
-        # --- STREAMING_CHUNK: Sélection et ajout au panier ---
         cats = ["Toutes"] + data['Catégorie'].dropna().unique().tolist()
         cat_select = st.selectbox("1. Choisir une catégorie :", cats)
         search_query = st.text_input("🔍 Rechercher un article :", placeholder="Tapez un nom...")
@@ -95,17 +98,17 @@ else:
                 st.session_state.basket.append({
                     'designation': item['Désignation'],
                     'qty': qty,
-                    'cond': item.get('Conditionnement', 'N/A')
+                    'cond': item.get('Conditionnement', 'N/A'),
+                    'info': item.get('Informations', 'N/A') # Capture des infos
                 })
                 st.rerun()
         
-        # --- STREAMING_CHUNK: Visualisation du panier ---
         st.divider()
         st.subheader("🛒 Mon Panier")
         if st.session_state.basket:
             for idx, item in enumerate(st.session_state.basket):
                 col1, col2 = st.columns([4, 1])
-                col1.write(f"{item['qty']} x **{item['designation']}** ({item['cond']})")
+                col1.write(f"{item['qty']} x **{item['designation']}** ({item['cond']}) <br> <small>Info: {item['info']}</small>", unsafe_allow_html=True)
                 if col2.button("❌", key=f"del_{idx}"):
                     st.session_state.basket.pop(idx)
                     st.rerun()
@@ -116,14 +119,13 @@ else:
                     with st.spinner("Envoi de la commande..."):
                         if send_basket_email(nom, st.session_state.basket):
                             st.success("Commande envoyée !")
-                            st.session_state.basket = [] # Vider après envoi
+                            st.session_state.basket = []
                             st.rerun()
                 else:
                     st.warning("Veuillez renseigner votre nom.")
         else:
             st.info("Le panier est vide.")
 
-    # --- STREAMING_CHUNK: Gestion Inventaire ---
     with tab_gest:
         st.subheader("🛠️ Édition du Stock")
         if not st.session_state.auth_gest:
