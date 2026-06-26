@@ -6,7 +6,6 @@ from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
 
 # --- CONFIGURATION ---
-# Définition de la variable globale pour éviter l'erreur NameError
 SHEET_URL = "https://docs.google.com/spreadsheets/d/e/2PACX-1vT6j8ofGR_sogNbwOjGZaX3v7KsswlNiXcIjjDBA5p8gg8SDyUmXBOgr0lGGu3G9SDkqytF_GBCXNMb/pub?output=csv"
 MOT_DE_PASSE_GESTION = "INMED2026" 
 GROQ_API_KEY = st.secrets.get("GROQ_API_KEY", "")
@@ -22,7 +21,7 @@ def load_data(reload_trigger):
 # --- FONCTION D'INTERROGATION IA ---
 def ask_ai(question, context):
     if not GROQ_API_KEY:
-        return "⚠️ La clé API Groq n'est pas configurée dans les secrets."
+        return "⚠️ La clé API Groq n'est pas configurée."
     
     prompt = f"""Tu es l'assistant du laboratoire INMED. Réponds aux questions sur le stock de plastique.
     Contexte actuel du stock :
@@ -44,7 +43,7 @@ def ask_ai(question, context):
         )
         return response.json()['choices'][0]['message']['content']
     except Exception as e:
-        return f"Erreur de communication avec l'IA : {str(e)}"
+        return f"Erreur IA : {str(e)}"
 
 # --- FONCTION D'ENVOI D'E-MAIL ---
 def send_basket_email(nom, basket):
@@ -92,18 +91,15 @@ st.title("🧪 Demande plastique - INMED")
 if 'reload_key' not in st.session_state: st.session_state.reload_key = 0
 if 'auth_gest' not in st.session_state: st.session_state.auth_gest = False
 if 'basket' not in st.session_state: st.session_state.basket = []
-if 'chat_hist' not in st.session_state: st.session_state.chat_hist = []
 
 data = load_data(st.session_state.reload_key)
 
 if isinstance(data, str):
-    st.error(f"Erreur lors du chargement : {data}")
+    st.error(f"Erreur chargement : {data}")
 elif data.empty:
     st.warning("Le fichier est vide.")
 else:
-    # --- CALCUL DES CATÉGORIES ICI (Corrigé) ---
     cats = ["Toutes"] + sorted(data['Catégorie'].dropna().unique().tolist())
-    
     tab_cmd, tab_gest, tab_faq = st.tabs(["🛒 Commander", "🛠️ Gestion Inventaire", "❓ FAQ IA"])
 
     with tab_cmd:
@@ -121,7 +117,6 @@ else:
                 options=filtered_df.index, 
                 format_func=lambda i: f"{filtered_df.loc[i, 'Désignation']} — {filtered_df.loc[i, 'Informations']}"
             )
-            
             item = data.loc[selected_idx]
             qty = st.number_input("Quantité", min_value=1, value=1)
             
@@ -148,16 +143,33 @@ else:
             nom = st.text_input("Votre Nom")
             if st.button("🚀 Envoyer la commande"):
                 if nom and send_basket_email(nom, st.session_state.basket):
-                    st.success("Commande envoyée !")
+                    st.success("✅ Commande envoyée avec succès !")
                     st.session_state.basket = []
+                    # Un petit délai visuel avant de vider pour que l'utilisateur voie le message
+                    st.balloons()
+                elif not nom:
+                    st.warning("Veuillez renseigner votre nom.")
+
+    with tab_gest:
+        st.subheader("🛠️ Gestion Inventaire")
+        if not st.session_state.auth_gest:
+            password = st.text_input("🔑 Mot de passe :", type="password")
+            if st.button("Valider"):
+                if password == MOT_DE_PASSE_GESTION:
+                    st.session_state.auth_gest = True
                     st.rerun()
+        else:
+            if st.button("🔒 Se déconnecter"):
+                st.session_state.auth_gest = False
+                st.rerun()
+            st.dataframe(data, use_container_width=True)
+            if st.button("🔄 Rafraîchir les données"):
+                st.session_state.reload_key += 1
+                st.rerun()
 
     with tab_faq:
-        # ... (Logique IA identique)
         if prompt := st.chat_input("Ex: Quel plastique pour 20-200µl ?"):
-            st.session_state.chat_hist.append(("user", prompt))
             with st.chat_message("user"): st.write(prompt)
             with st.chat_message("assistant"):
                 response = ask_ai(prompt, data.to_string())
                 st.write(response)
-                st.session_state.chat_hist.append(("assistant", response))
