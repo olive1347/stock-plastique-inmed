@@ -1,56 +1,55 @@
 import streamlit as st
 import pandas as pd
+import os
 
-# On définit la fonction sans arguments complexes pour éviter les conflits
-@st.cache_data(ttl=60)
+# --- Configuration de la page ---
+st.set_page_config(page_title="Gestion Stock INMED", page_icon="🧪")
+
+# --- Chargement des données ---
+@st.cache_data(ttl=600)
 def load_data():
+    # Vérification que le secret est défini
+    if "SHEET_URL" not in st.secrets:
+        st.error("Erreur : La variable 'SHEET_URL' est manquante dans les secrets.")
+        return None
+    
     try:
-        url = st.secrets.get("SHEET_URL")
-        if not url: return "URL non configurée dans les secrets."
-        df = pd.read_csv(url)
-        # Nettoyage systématique des colonnes
-        df.columns = df.columns.str.strip()
-        return df
+        url = st.secrets["SHEET_URL"]
+        # Lecture du CSV via l'URL
+        data = pd.read_csv(url)
+        return data
     except Exception as e:
-        return str(e)
+        st.error(f"Erreur lors du chargement des données : {e}")
+        return None
 
-st.title("🧪 Gestionnaire de Stock INMED")
-
-# Chargement des données
+# Chargement principal
 data = load_data()
 
-if isinstance(data, str):
-    st.error(f"Erreur de chargement : {data}")
-else:
-    # Nettoyage des noms de colonnes pour la recherche (minuscules)
-    data.columns = [c.strip().lower() for c in data.columns]
+# Titre
+st.title("🧪 Demande plastique - INMED")
+
+# Vérification si les données sont bien chargées avant de continuer
+if data is not None:
+    # --- Interface de commande ---
+    st.header("Passer une commande")
     
-    # Vérification des colonnes nécessaires
-    if 'catégorie' not in data.columns or 'désignation' not in data.columns:
-        st.error(f"Colonnes manquantes dans le CSV. Colonnes trouvées : {list(data.columns)}")
-    else:
-        # Interface de sélection
-        cats = ["Toutes"] + sorted([str(c) for c in data['catégorie'].dropna().unique()])
+    # Sécurisation de la création de la liste de catégories
+    if 'Catégorie' in data.columns:
+        cats = ["Toutes"] + sorted(data['Catégorie'].dropna().unique().tolist())
         cat_select = st.selectbox("1. Choisir une catégorie :", cats)
-        
-        filtered_df = data if cat_select == "Toutes" else data[data['catégorie'] == cat_select]
-        
-        # Sélection d'article
-        selected_idx = st.selectbox(
-            "2. Choisir un article :", 
-            options=filtered_df.index, 
-            format_func=lambda i: filtered_df.loc[i, 'désignation']
-        )
-        item = data.loc[selected_idx]
-        
-        # Extraction sécurisée des informations
-        info_texte = item.get('informations', "Aucune information complémentaire.")
-        cdt_texte = item.get('conditionnement', "N/A")
-        ref_texte = item.get('ref fabricant', "N/A")
-        
-        # Affichage propre
-        st.info(f"**Info :** {info_texte} \n\n *Cdt : {cdt_texte}* | *Réf : {ref_texte}*")
-        
-        # Visualisation brute si besoin
-        with st.expander("Voir tout le détail"):
-            st.write(item)
+    else:
+        st.error("La colonne 'Catégorie' est introuvable dans le fichier.")
+        cat_select = "Toutes"
+
+    # --- Onglet de Contrôle Qualité (Préparation) ---
+    st.divider()
+    st.subheader("📸 Contrôle Qualité (Beta)")
+    uploaded_file = st.file_uploader("Prendre une photo du produit pour vérification", type=["jpg", "jpeg", "png"])
+    
+    if uploaded_file is not None:
+        st.image(uploaded_file, caption="Produit à analyser", use_container_width=True)
+        if st.button("Analyser la qualité"):
+            st.info("Module d'analyse par vision en cours de configuration...")
+            # Ici, nous appellerons plus tard l'IA Vision (ex: Gemini)
+else:
+    st.warning("Veuillez configurer correctement l'accès à vos données.")
