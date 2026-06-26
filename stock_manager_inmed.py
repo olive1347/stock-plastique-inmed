@@ -5,7 +5,6 @@ import time
 # CONFIGURATION
 SHEET_URL = "https://docs.google.com/spreadsheets/d/e/2PACX-1vT6j8ofGR_sogNbwOjGZaX3v7KsswlNiXcIjjDBA5p8gg8SDyUmXBOgr0lGGu3G9SDkqytF_GBCXNMb/pub?output=csv"
 
-# On utilise un paramètre 'force_reload' pour forcer la mise à jour
 @st.cache_data(ttl=60)
 def load_data(reload_trigger):
     try:
@@ -14,18 +13,14 @@ def load_data(reload_trigger):
     except Exception as e:
         return str(e)
 
-# Configuration de la page
 st.set_page_config(page_title="GestStock INMED", page_icon="🧪", layout="wide")
 st.title("🧪 GestStock INMED")
 
-# Initialisation du déclencheur de rechargement dans la session
 if 'reload_key' not in st.session_state:
     st.session_state.reload_key = 0
 
-# Chargement des données avec la clé qui change au clic
 data = load_data(st.session_state.reload_key)
 
-# Vérification des erreurs
 if isinstance(data, str):
     st.error(f"Erreur lors du chargement : {data}")
 elif data.empty:
@@ -41,18 +36,30 @@ else:
             
             filtered_df = data if cat_select == "Toutes" else data[data['Catégorie'] == cat_select]
             
+            # Enrichissement du menu déroulant : Désignation + Cond + Réf
+            def format_func(idx):
+                item = filtered_df.loc[idx]
+                cond = item.get('Conditionnement', '')
+                ref = item.get('Ref fabricant', '')
+                return f"{item['Désignation']} — [{cond}] (Réf: {ref})"
+
             selected_idx = st.selectbox(
                 "2. Choisir un article :", 
                 options=filtered_df.index, 
-                format_func=lambda x: f"{filtered_df.loc[x, 'Désignation']}"
+                format_func=format_func
             )
             
             if selected_idx is not None:
                 item = filtered_df.loc[selected_idx]
+                # Affichage complet dans la fenêtre bleue
                 st.info(f"""
-                **Article :** {item.get('Désignation', 'N/A')}  
-                **Conditionnement :** {item.get('Conditionnement', 'N/A')}  
-                **Informations :** {item.get('Informations', 'N/A')}
+                ### 📋 Détails de l'article
+                - **Désignation :** {item.get('Désignation', 'N/A')}
+                - **Conditionnement :** {item.get('Conditionnement', 'N/A')}
+                - **Fabricant :** {item.get('Fabricant', 'N/A')}
+                - **Ref Fabricant :** {item.get('Ref fabricant', 'N/A')}
+                - **Ref UGAP :** {item.get('Ref UGAP', 'N/A')}
+                - **Informations :** {item.get('Informations', 'N/A')}
                 """)
                 
                 qty = st.number_input("Quantité", min_value=1, value=1)
@@ -61,13 +68,13 @@ else:
                     if nom:
                         st.success(f"Commande de {qty} x {item['Désignation']} envoyée par {nom} !")
                     else:
-                        st.warning("Veuillez renseigner votre nom.")
+                        st.warning("Vérifiez que votre nom est bien renseigné.")
+        else:
+            st.error("Colonnes manquantes dans votre fichier. Vérifiez les en-têtes : 'Catégorie', 'Désignation', etc.")
 
     with tab_gest:
         st.subheader("🛠️ Édition du Stock")
         st.dataframe(data, use_container_width=True)
-        
-        # Le bouton incrémente la clé, ce qui force load_data à s'exécuter à nouveau
         if st.button("🔄 Rafraîchir les données"):
             st.session_state.reload_key += 1
             st.rerun()
