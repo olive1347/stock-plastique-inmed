@@ -3,6 +3,7 @@ import pandas as pd
 
 # CONFIGURATION
 SHEET_URL = "https://docs.google.com/spreadsheets/d/e/2PACX-1vT6j8ofGR_sogNbwOjGZaX3v7KsswlNiXcIjjDBA5p8gg8SDyUmXBOgr0lGGu3G9SDkqytF_GBCXNMb/pub?output=csv"
+MOT_DE_PASSE_GESTION = "INMED2026" # Vous pouvez modifier ce mot de passe ici
 
 @st.cache_data(ttl=60)
 def load_data(reload_trigger):
@@ -15,8 +16,11 @@ def load_data(reload_trigger):
 st.set_page_config(page_title="GestStock INMED", page_icon="🧪", layout="wide")
 st.title("🧪 GestStock INMED")
 
+# Initialisation session state
 if 'reload_key' not in st.session_state:
     st.session_state.reload_key = 0
+if 'auth_gest' not in st.session_state:
+    st.session_state.auth_gest = False
 
 data = load_data(st.session_state.reload_key)
 
@@ -30,20 +34,16 @@ else:
     with tab_cmd:
         st.subheader("Passer une commande")
         if 'Catégorie' in data.columns and 'Désignation' in data.columns:
-            # 1. Filtre par Catégorie
             cats = ["Toutes"] + data['Catégorie'].dropna().unique().tolist()
             cat_select = st.selectbox("1. Choisir une catégorie :", cats)
             
-            # 2. Barre de recherche (nouveau)
             search_query = st.text_input("🔍 Rechercher un article :", placeholder="Tapez un nom...")
             
-            # Application des filtres cumulés
             filtered_df = data if cat_select == "Toutes" else data[data['Catégorie'] == cat_select]
             if search_query:
                 filtered_df = filtered_df[filtered_df['Désignation'].str.contains(search_query, case=False, na=False)]
             
             if not filtered_df.empty:
-                # Menu de sélection final
                 selected_idx = st.selectbox(
                     "3. Choisir un article :", 
                     options=filtered_df.index, 
@@ -64,15 +64,28 @@ else:
                             st.warning("Veuillez renseigner votre nom.")
             else:
                 st.warning("Aucun article ne correspond à votre recherche.")
-        else:
-            st.error("Colonnes manquantes dans votre fichier.")
 
     with tab_gest:
         st.subheader("🛠️ Édition du Stock")
-        st.dataframe(data, use_container_width=True)
-        if st.button("🔄 Rafraîchir les données"):
-            st.session_state.reload_key += 1
-            st.rerun()
+        
+        # Vérification du mot de passe
+        if not st.session_state.auth_gest:
+            password = st.text_input("🔑 Mot de passe requis pour accéder à la gestion :", type="password")
+            if st.button("Valider"):
+                if password == MOT_DE_PASSE_GESTION:
+                    st.session_state.auth_gest = True
+                    st.rerun()
+                else:
+                    st.error("Mot de passe incorrect.")
+        else:
+            if st.button("🔒 Se déconnecter"):
+                st.session_state.auth_gest = False
+                st.rerun()
+            
+            st.dataframe(data, use_container_width=True)
+            if st.button("🔄 Rafraîchir les données"):
+                st.session_state.reload_key += 1
+                st.rerun()
 
 st.sidebar.markdown("---")
 st.sidebar.info("Note : Les modifications doivent être faites dans le Google Sheet source.")
