@@ -13,8 +13,8 @@ def load_data(reload_trigger):
     except Exception as e:
         return str(e)
 
-st.set_page_config(page_title="GestStock INMED", page_icon="🧪", layout="wide")
-st.title("🧪 GestStock INMED")
+st.set_page_config(page_title="Demande plastique - INMED", page_icon="🧪", layout="wide")
+st.title("🧪 Demande plastique - INMED")
 
 if 'reload_key' not in st.session_state:
     st.session_state.reload_key = 0
