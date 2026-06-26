@@ -36,7 +36,7 @@ else:
             
             filtered_df = data if cat_select == "Toutes" else data[data['Catégorie'] == cat_select]
             
-            # Enrichissement du menu déroulant : Désignation + Cond + Réf
+            # Menu déroulant enrichi pour le choix
             def format_func(idx):
                 item = filtered_df.loc[idx]
                 cond = item.get('Conditionnement', '')
@@ -51,16 +51,9 @@ else:
             
             if selected_idx is not None:
                 item = filtered_df.loc[selected_idx]
-                # Affichage complet dans la fenêtre bleue
-                st.info(f"""
-                ### 📋 Détails de l'article
-                - **Désignation :** {item.get('Désignation', 'N/A')}
-                - **Conditionnement :** {item.get('Conditionnement', 'N/A')}
-                - **Fabricant :** {item.get('Fabricant', 'N/A')}
-                - **Ref Fabricant :** {item.get('Ref fabricant', 'N/A')}
-                - **Ref UGAP :** {item.get('Ref UGAP', 'N/A')}
-                - **Informations :** {item.get('Informations', 'N/A')}
-                """)
+                
+                # Affichage épuré : uniquement la colonne Informations
+                st.info(f"**Informations sur l'article :**\n\n{item.get('Informations', 'Aucune information disponible.')}")
                 
                 qty = st.number_input("Quantité", min_value=1, value=1)
                 nom = st.text_input("Votre Nom")
@@ -68,7 +61,7 @@ else:
                     if nom:
                         st.success(f"Commande de {qty} x {item['Désignation']} envoyée par {nom} !")
                     else:
-                        st.warning("Vérifiez que votre nom est bien renseigné.")
+                        st.warning("Veuillez renseigner votre nom.")
         else:
             st.error("Colonnes manquantes dans votre fichier. Vérifiez les en-têtes : 'Catégorie', 'Désignation', etc.")
 
