@@ -43,11 +43,11 @@ else:
                 filtered_df = filtered_df[filtered_df['Désignation'].str.contains(search_query, case=False, na=False)]
             
             if not filtered_df.empty:
-                # Menu de sélection : Désignation + Informations
+                # Menu de sélection épuré : Désignation + Informations
                 selected_idx = st.selectbox(
                     "3. Choisir un article :", 
                     options=filtered_df.index, 
-                    format_func=lambda i: f"{filtered_df.loc[i, 'Désignation']} — {filtered_df.loc[i, 'Informations']} (Ligne {i+2})"
+                    format_func=lambda i: f"{filtered_df.loc[i, 'Désignation']} — {filtered_df.loc[i, 'Informations']}"
                 )
                 
                 if selected_idx is not None:
