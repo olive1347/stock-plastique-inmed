@@ -2,11 +2,26 @@ import streamlit as st
 import pandas as pd
 import smtplib
 import requests
+import base64 # 👁️ NOUVEAU
 from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
 
 # --- CONFIGURATION ---
-SHEET_URL = "https://docs.google.com/spreadsheets/d/e/2PACX-1vT6j8ofGR_sogNbwOjGZaX3v7KsswlNiXcIjjDBA5p8gg8SDyUmXBOgr0lGGu3G9SDkqytF_GBCXNMb/pub?output=csv"
+# --- FONCTION D'ANALYSE D'IMAGE (Vision) --- # 👁️ NOUVEAU
+def analyze_image_with_ai(image_bytes):
+    """
+    Envoie l'image à un modèle Vision (ex: Gemini).
+    Note : Vous devez adapter l'URL/API selon votre fournisseur Vision.
+    """
+    base64_image = base64.b64encode(image_bytes).decode('utf-8')
+    
+    # Exemple de structure pour un modèle Vision
+    prompt = "Analyse cette photo de matériel de laboratoire. Est-ce conforme ? Y a-t-il des dommages ou une péremption visible ? Réponds très brièvement."
+    
+    # --- LOGIQUE D'APPEL API VISION ICI ---
+    # return "Simulé : L'IA a détecté que le plastique est intact."
+    return "👁️ Module Vision prêt : Veuillez connecter une API Vision (ex: Google Gemini) pour finaliser l'analyse."
+
 MOT_DE_PASSE_GESTION = "INMED2026" 
 GROQ_API_KEY = st.secrets.get("GROQ_API_KEY", "")
 
@@ -89,7 +104,10 @@ st.set_page_config(page_title="Demande plastique - INMED", page_icon="🧪", lay
 st.title("🧪 Demande plastique - INMED")
 
 if 'reload_key' not in st.session_state: st.session_state.reload_key = 0
-if 'auth_gest' not in st.session_state: st.session_state.auth_gest = False
+# Modification des onglets pour ajouter QC
+cats = ["Toutes"] + sorted(data['Catégorie'].dropna().unique().tolist())
+tab_cmd, tab_gest, tab_faq, tab_qc = st.tabs(["🛒 Commander", "🛠️ Gestion Inventaire", "❓ FAQ IA", "👁️ Contrôle Qualité"]) # 👁️ NOUVEAU
+
 if 'basket' not in st.session_state: st.session_state.basket = []
 
 data = load_data(st.session_state.reload_key)
@@ -176,3 +194,16 @@ else:
             with st.chat_message("assistant"):
                 response = ask_ai(prompt, data.to_string())
                 st.write(response)
+
+    with tab_qc: # 👁️ NOUVEAU
+        st.subheader("👁️ Contrôle Qualité par Vision")
+        st.write("Prenez une photo du matériel pour vérifier son état (détérioration, conformité).")
+        
+        uploaded_file = st.camera_input("Prendre une photo")
+        
+        if uploaded_file:
+            st.image(uploaded_file, caption="Image capturée", use_container_width=True)
+            if st.button("🚀 Analyser avec l'IA"):
+                with st.spinner("Analyse en cours..."):
+                    resultat = analyze_image_with_ai(uploaded_file.getvalue())
+                    st.success(f"Résultat : {resultat}")
