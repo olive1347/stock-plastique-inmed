@@ -30,37 +30,42 @@ else:
     with tab_cmd:
         st.subheader("Passer une commande")
         if 'Catégorie' in data.columns and 'Désignation' in data.columns:
+            # 1. Filtre par Catégorie
             cats = ["Toutes"] + data['Catégorie'].dropna().unique().tolist()
             cat_select = st.selectbox("1. Choisir une catégorie :", cats)
             
-            # On filtre en gardant l'index d'origine du fichier
+            # 2. Barre de recherche (nouveau)
+            search_query = st.text_input("🔍 Rechercher un article :", placeholder="Tapez un nom...")
+            
+            # Application des filtres cumulés
             filtered_df = data if cat_select == "Toutes" else data[data['Catégorie'] == cat_select]
+            if search_query:
+                filtered_df = filtered_df[filtered_df['Désignation'].str.contains(search_query, case=False, na=False)]
             
-            # Création du menu : On ajoute l'index (i) à l'affichage pour garantir l'unicité
-            # et on utilise cet index pour récupérer la ligne exacte dans le dataframe principal 'data'
-            selected_idx = st.selectbox(
-                "2. Choisir un article :", 
-                options=filtered_df.index, 
-                format_func=lambda i: f"{filtered_df.loc[i, 'Désignation']} — [{filtered_df.loc[i, 'Conditionnement']}] (Ligne {i+2})"
-            )
-            
-            if selected_idx is not None:
-                # Récupération sécurisée et directe par index absolu
-                item = data.loc[selected_idx]
+            if not filtered_df.empty:
+                # Menu de sélection final
+                selected_idx = st.selectbox(
+                    "3. Choisir un article :", 
+                    options=filtered_df.index, 
+                    format_func=lambda i: f"{filtered_df.loc[i, 'Désignation']} — [{filtered_df.loc[i, 'Conditionnement']}] (Ligne {i+2})"
+                )
                 
-                # Affichage des informations liées UNIQUEMENT à cette ligne
-                st.info(f"**Informations sur l'article :**\n\n{item.get('Informations', 'Aucune information disponible.')}")
-                
-                qty = st.number_input("Quantité", min_value=1, value=1)
-                nom = st.text_input("Votre Nom")
-                
-                if st.button("🚀 Envoyer la commande"):
-                    if nom:
-                        st.success(f"Commande de {qty} x {item['Désignation']} envoyée par {nom} !")
-                    else:
-                        st.warning("Veuillez renseigner votre nom.")
+                if selected_idx is not None:
+                    item = data.loc[selected_idx]
+                    st.info(f"**Informations sur l'article :**\n\n{item.get('Informations', 'Aucune information disponible.')}")
+                    
+                    qty = st.number_input("Quantité", min_value=1, value=1)
+                    nom = st.text_input("Votre Nom")
+                    
+                    if st.button("🚀 Envoyer la commande"):
+                        if nom:
+                            st.success(f"Commande de {qty} x {item['Désignation']} envoyée par {nom} !")
+                        else:
+                            st.warning("Veuillez renseigner votre nom.")
+            else:
+                st.warning("Aucun article ne correspond à votre recherche.")
         else:
-            st.error("Colonnes manquantes dans votre fichier. Vérifiez les en-têtes : 'Catégorie', 'Désignation', etc.")
+            st.error("Colonnes manquantes dans votre fichier.")
 
     with tab_gest:
         st.subheader("🛠️ Édition du Stock")
