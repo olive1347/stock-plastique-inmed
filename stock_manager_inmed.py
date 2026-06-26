@@ -29,7 +29,7 @@ def send_basket_email(nom, basket):
     
     html_items = ""
     for item in basket:
-        # Ajout de la référence fabricant dans le mail
+        # Affichage avec la référence fabricant corrigée
         html_items += f"""
         <li style="margin-bottom:10px;">
             <b>{item['designation']}</b> (Réf: {item['ref_fab']})<br>
@@ -93,7 +93,11 @@ else:
             )
             
             item = data.loc[selected_idx]
-            st.info(f"### 📦 Détails logistiques\n- **Conditionnement :** {item.get('Conditionnement', 'N/A')}\n- **Fabricant :** {item.get('Fabricant', 'N/A')}\n- **Ref Fabricant :** {item.get('Ref fabricant', 'N/A')}")
+            st.info(f"""
+            ### 📦 Détails logistiques
+            - **Conditionnement :** {item.get('Conditionnement', 'N/A')}
+            - **Fabricant :** {item.get('Fabricant', 'N/A')}
+            """)
             
             qty = st.number_input("Quantité", min_value=1, value=1)
             
@@ -103,7 +107,7 @@ else:
                     'qty': qty,
                     'cond': item.get('Conditionnement', 'N/A'),
                     'info': item.get('Informations', 'N/A'),
-                    'ref_fab': item.get('Ref fabricant', 'N/A') # Capture de la référence
+                    'ref_fab': item.get('Ref Fabricant', 'N/A') # Correction de la clé ici
                 })
                 st.rerun()
         
@@ -118,8 +122,7 @@ else:
                     st.rerun()
             
             nom = st.text_input("Votre Nom pour la commande")
-            # Modification du texte du bouton
-            if st.button("🚀 Envoyer la commande"):
+            if st.button("🚀 Envoyer la commande"): # Texte simplifié
                 if nom:
                     with st.spinner("Envoi de la commande..."):
                         if send_basket_email(nom, st.session_state.basket):
