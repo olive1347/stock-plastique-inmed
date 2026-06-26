@@ -29,16 +29,19 @@ def send_basket_email(nom, basket):
     
     html_items = ""
     for item in basket:
-        # Intégration de la colonne Informations dans le mail
+        # Ajout de la référence fabricant dans le mail
         html_items += f"""
-        <li><b>{item['designation']}</b> : {item['qty']} x (Cdt: {item['cond']})<br>
-        <small style="color:gray;">Info: {item['info']}</small></li><br>
+        <li style="margin-bottom:10px;">
+            <b>{item['designation']}</b> (Réf: {item['ref_fab']})<br>
+            Quantité : {item['qty']} x (Cdt: {item['cond']})<br>
+            <small style="color:gray;">Info: {item['info']}</small>
+        </li>
         """
     
     body = f"""
     <h2>Nouvelle demande de matériel Plastique</h2>
     <p><b>Demandeur :</b> {nom}</p>
-    <ul>{html_items}</ul>
+    <ul style="list-style-type:none; padding:0;">{html_items}</ul>
     <hr>
     <p style="color:#666; font-size:12px;">Généré automatiquement par le gestionnaire de stock INMED.</p>
     """
@@ -90,7 +93,7 @@ else:
             )
             
             item = data.loc[selected_idx]
-            st.info(f"### 📦 Détails logistiques\n- **Conditionnement :** {item.get('Conditionnement', 'N/A')}\n- **Fabricant :** {item.get('Fabricant', 'N/A')}")
+            st.info(f"### 📦 Détails logistiques\n- **Conditionnement :** {item.get('Conditionnement', 'N/A')}\n- **Fabricant :** {item.get('Fabricant', 'N/A')}\n- **Ref Fabricant :** {item.get('Ref fabricant', 'N/A')}")
             
             qty = st.number_input("Quantité", min_value=1, value=1)
             
@@ -99,7 +102,8 @@ else:
                     'designation': item['Désignation'],
                     'qty': qty,
                     'cond': item.get('Conditionnement', 'N/A'),
-                    'info': item.get('Informations', 'N/A') # Capture des infos
+                    'info': item.get('Informations', 'N/A'),
+                    'ref_fab': item.get('Ref fabricant', 'N/A') # Capture de la référence
                 })
                 st.rerun()
         
@@ -108,13 +112,14 @@ else:
         if st.session_state.basket:
             for idx, item in enumerate(st.session_state.basket):
                 col1, col2 = st.columns([4, 1])
-                col1.write(f"{item['qty']} x **{item['designation']}** ({item['cond']}) <br> <small>Info: {item['info']}</small>", unsafe_allow_html=True)
+                col1.write(f"{item['qty']} x **{item['designation']}** ({item['cond']}) <br> <small>Info: {item['info']} | Ref: {item['ref_fab']}</small>", unsafe_allow_html=True)
                 if col2.button("❌", key=f"del_{idx}"):
                     st.session_state.basket.pop(idx)
                     st.rerun()
             
             nom = st.text_input("Votre Nom pour la commande")
-            if st.button("🚀 Envoyer la commande groupée"):
+            # Modification du texte du bouton
+            if st.button("🚀 Envoyer la commande"):
                 if nom:
                     with st.spinner("Envoi de la commande..."):
                         if send_basket_email(nom, st.session_state.basket):
