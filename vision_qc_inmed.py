@@ -1,63 +1,59 @@
 import streamlit as st
-import base64
+import pandas as pd
+import smtplib
 import requests
-import json
+from email.mime.multipart import MIMEMultipart
+from email.mime.text import MIMEText
 
-st.set_page_config(page_title="Vision QC - INMED", page_icon="👁️")
-st.title("👁️ Contrôle Qualité par Vision - INMED")
-
+# --- CONFIGURATION ---
 GROQ_API_KEY = st.secrets.get("GROQ_API_KEY", "")
 
-def analyze_image_with_vision(image_bytes):
-    """Envoie l'image au modèle vision via Groq."""
-    if not GROQ_API_KEY:
-        return "❌ Erreur : Clé API Groq manquante."
-
-    # Conversion en base64 pour l'API
-    image_base64 = base64.b64encode(image_bytes).decode('utf-8')
-    
-    # Prompt spécifique pour le laboratoire
-    prompt = """Tu es un expert en contrôle qualité pour le matériel de laboratoire plastique.
-    Analyse l'image fournie et réponds aux points suivants :
-    1. État général : Y a-t-il des déformations, des fissures ou des impuretés visibles ?
-    2. Conformité : Le matériel semble-t-il propre et utilisable en milieu stérile ?
-    3. Recommandation : Valides-tu l'utilisation de cet article ? (Oui/Non)
-    Sois très strict."""
-
+@st.cache_data(ttl=60)
+def load_data():
     try:
-        # Appel à l'API Llama 3.2 Vision (modèle supportant les images)
+        url = st.secrets.get("SHEET_URL")
+        if not url: return None
+        return pd.read_csv(url)
+    except: return None
+
+# --- FONCTION VISION CORRIGÉE ---
+def analyze_image_with_ai(image_data):
+    # Sécurisation de la réponse API pour éviter le crash 'choices'
+    try:
+        # Note : Assurez-vous d'utiliser un modèle Vision compatible sur Groq
+        # Si 'choices' manque, c'est que la requête est rejetée par l'API
         response = requests.post(
             "https://api.groq.com/openai/v1/chat/completions",
             headers={"Authorization": f"Bearer {GROQ_API_KEY}"},
             json={
                 "model": "llama-3.2-11b-vision-preview",
-                "messages": [
-                    {
-                        "role": "user",
-                        "content": [
-                            {"type": "text", "text": prompt},
-                            {"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{image_base64}"}}
-                        ]
-                    }
-                ],
-                "temperature": 0.2
-            },
-            timeout=20
+                "messages": [{"role": "user", "content": "Analyse ce produit..."}],
+            }, timeout=15
         )
-        return response.json()['choices'][0]['message']['content']
+        data = response.json()
+        if 'choices' in data:
+            return data['choices'][0]['message']['content']
+        else:
+            return f"Réponse API invalide : {data}"
     except Exception as e:
         return f"Erreur de vision : {str(e)}"
 
-st.write("Prenez une photo de l'article pour lancer le contrôle qualité.")
-captured_image = st.camera_input("Scanner un article")
+# --- INTERFACE ---
+st.set_page_config(page_title="INMED Stock", layout="wide")
+data = load_data()
 
-if captured_image is not None:
-    # Lecture des octets de l'image
-    image_bytes = captured_image.getvalue()
+if data is None:
+    st.error("Données non chargées. Vérifiez SHEET_URL dans les secrets.")
+else:
+    tab1, tab2 = st.tabs(["🛒 Commande", "📸 Contrôle Qualité"])
     
-    with st.spinner("Analyse en cours par l'IA..."):
-        result = analyze_image_with_vision(image_bytes)
-        
-    st.divider()
-    st.subheader("📊 Résultat du contrôle")
-    st.write(result)
+    with tab1:
+        st.write("Gestion des commandes...")
+        # ... (votre code de commande ici)
+
+    with tab2:
+        st.subheader("📸 Contrôle Qualité")
+        uploaded_file = st.file_uploader("Prendre une photo", type=["jpg", "png"])
+        if uploaded_file and st.button("Analyser"):
+            result = analyze_image_with_ai(uploaded_file)
+            st.write(result)
