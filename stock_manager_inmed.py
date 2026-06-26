@@ -6,9 +6,6 @@ from email.mime.text import MIMEText
 import requests
 
 # --- CONFIGURATION ---
-# Note : Assurez-vous que SHEET_URL est défini dans les Secrets Streamlit
-# Si vous préférez le mettre ici pour test, décommentez la ligne ci-dessous :
-# SHEET_URL = "VOTRE_URL_CSV_ICI"
 MOT_DE_PASSE_GESTION = "INMED2026" 
 GROQ_API_KEY = st.secrets.get("GROQ_API_KEY", "")
 
@@ -18,6 +15,8 @@ def load_data(reload_trigger):
         url = st.secrets.get("SHEET_URL")
         if not url: return "URL non configurée dans les secrets."
         df = pd.read_csv(url)
+        # Nettoyage automatique des noms de colonnes pour éviter les espaces invisibles
+        df.columns = df.columns.str.strip()
         return df
     except Exception as e:
         return str(e)
@@ -71,6 +70,12 @@ data = load_data(st.session_state.reload_key)
 if isinstance(data, str):
     st.error(f"Erreur chargement : {data}")
 else:
+    # S'assurer que les colonnes nécessaires existent
+    required_cols = ['Catégorie', 'Désignation']
+    if not all(col in data.columns for col in required_cols):
+        st.error(f"Erreur : Le fichier CSV doit contenir les colonnes : {', '.join(required_cols)}")
+        st.stop()
+
     cats = ["Toutes"] + sorted(data['Catégorie'].dropna().unique().tolist())
     tab_cmd, tab_gest, tab_faq = st.tabs(["🛒 Commander", "🛠️ Gestion Inventaire", "❓ FAQ IA"])
 
@@ -80,11 +85,18 @@ else:
         selected_idx = st.selectbox("3. Choisir un article :", options=filtered_df.index, format_func=lambda i: filtered_df.loc[i, 'Désignation'])
         item = data.loc[selected_idx]
         
-        st.info(f"**Info :** {item.get('Informations', 'Aucune')} \n *Cdt : {item.get('Conditionnement', 'N/A')}* \n *Réf : {item.get('Ref Fabricant', 'N/A')}*")
+        # Correction affichage Informations
+        info_texte = item.get('Informations') if 'Informations' in item else ""
+        if pd.isna(info_texte): info_texte = "Aucune information complémentaire."
+        
+        cdt_texte = item.get('Conditionnement', 'N/A')
+        ref_texte = item.get('Ref Fabricant', 'N/A')
+        
+        st.info(f"**Info :** {info_texte} \n *Cdt : {cdt_texte}* | *Réf : {ref_texte}*")
         
         qty = st.number_input("Quantité", min_value=1, value=1)
         if st.button("➕ Ajouter au panier"):
-            st.session_state.basket.append({'designation': item['Désignation'], 'qty': qty, 'cond': item.get('Conditionnement'), 'ref_fab': item.get('Ref Fabricant')})
+            st.session_state.basket.append({'designation': item['Désignation'], 'qty': qty, 'cond': cdt_texte, 'ref_fab': ref_texte})
             st.rerun()
         
         if st.session_state.basket:
