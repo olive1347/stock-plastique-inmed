@@ -118,6 +118,10 @@ else:
                 format_func=lambda i: f"{filtered_df.loc[i, 'Désignation']} — {filtered_df.loc[i, 'Informations']}"
             )
             item = data.loc[selected_idx]
+            
+            # Réaffichage de la fenêtre bleue détaillée
+            st.info(f"**Informations sur l'article :**\n\n{item.get('Informations', 'Aucune info')}\n\n*Conditionnement : {item.get('Conditionnement', 'N/A')}*\n*Réf Fabricant : {item.get('Ref Fabricant', 'N/A')}*")
+            
             qty = st.number_input("Quantité", min_value=1, value=1)
             
             if st.button("➕ Ajouter au panier"):
@@ -145,7 +149,6 @@ else:
                 if nom and send_basket_email(nom, st.session_state.basket):
                     st.success("✅ Commande envoyée avec succès !")
                     st.session_state.basket = []
-                    # Un petit délai visuel avant de vider pour que l'utilisateur voie le message
                     st.balloons()
                 elif not nom:
                     st.warning("Veuillez renseigner votre nom.")
