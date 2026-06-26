@@ -1,12 +1,14 @@
 import streamlit as st
 import pandas as pd
 import smtplib
+import requests  # Ajouté pour l'IA
 from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
 
 # --- CONFIGURATION ---
 SHEET_URL = "https://docs.google.com/spreadsheets/d/e/2PACX-1vT6j8ofGR_sogNbwOjGZaX3v7KsswlNiXcIjjDBA5p8gg8SDyUmXBOgr0lGGu3G9SDkqytF_GBCXNMb/pub?output=csv"
 MOT_DE_PASSE_GESTION = "INMED2026" 
+GROQ_API_KEY = st.secrets.get("GROQ_API_KEY", "")
 
 @st.cache_data(ttl=60)
 def load_data(reload_trigger):
@@ -15,6 +17,33 @@ def load_data(reload_trigger):
         return df
     except Exception as e:
         return str(e)
+
+# --- FONCTION D'INTERROGATION IA ---
+def ask_ai(question, context):
+    if not GROQ_API_KEY:
+        return "⚠️ La clé API Groq n'est pas configurée dans les secrets."
+    
+    prompt = f"""Tu es l'assistant du laboratoire INMED. Réponds aux questions sur le stock de plastique.
+    Contexte actuel du stock :
+    {context}
+    
+    Question de l'utilisateur : {question}
+    """
+    
+    try:
+        response = requests.post(
+            "https://api.groq.com/openai/v1/chat/completions",
+            headers={"Authorization": f"Bearer {GROQ_API_KEY}"},
+            json={
+                "model": "llama-3.1-8b-instant",
+                "messages": [{"role": "user", "content": prompt}],
+                "temperature": 0.5
+            },
+            timeout=10
+        )
+        return response.json()['choices'][0]['message']['content']
+    except Exception as e:
+        return f"Erreur de communication avec l'IA : {str(e)}"
 
 # --- FONCTION D'ENVOI D'E-MAIL ---
 def send_basket_email(nom, basket):
@@ -65,6 +94,7 @@ st.title("🧪 Demande plastique - INMED")
 if 'reload_key' not in st.session_state: st.session_state.reload_key = 0
 if 'auth_gest' not in st.session_state: st.session_state.auth_gest = False
 if 'basket' not in st.session_state: st.session_state.basket = []
+if 'chat_hist' not in st.session_state: st.session_state.chat_hist = []
 
 data = load_data(st.session_state.reload_key)
 
@@ -73,11 +103,12 @@ if isinstance(data, str):
 elif data.empty:
     st.warning("Le fichier est vide.")
 else:
-    tab_cmd, tab_gest = st.tabs(["🛒 Commander", "🛠️ Gestion Inventaire"])
+    # --- MISE À JOUR DES ONGLETS ---
+    tab_cmd, tab_gest, tab_faq = st.tabs(["🛒 Commander", "🛠️ Gestion Inventaire", "❓ FAQ IA"])
 
     with tab_cmd:
         st.subheader("Passer une commande")
-        cats = ["Toutes"] + data['Catégorie'].dropna().unique().tolist()
+        # ... (le code de commande reste identique)
         cat_select = st.selectbox("1. Choisir une catégorie :", cats)
         search_query = st.text_input("🔍 Rechercher un article :", placeholder="Tapez un nom...")
         
@@ -150,3 +181,24 @@ else:
             if st.button("🔄 Rafraîchir les données"):
                 st.session_state.reload_key += 1
                 st.rerun()
+
+    # --- NOUVEL ONGLET FAQ IA ---
+    with tab_faq:
+        st.subheader("🤖 Assistant IA INMED")
+        st.write("Posez vos questions sur le stock, les références ou les procédures.")
+        
+        for role, content in st.session_state.chat_hist:
+            with st.chat_message(role):
+                st.write(content)
+        
+        if prompt := st.chat_input("Ex: Quel est le plastique le plus utilisé ?"):
+            st.session_state.chat_hist.append(("user", prompt))
+            with st.chat_message("user"):
+                st.write(prompt)
+            
+            with st.chat_message("assistant"):
+                with st.spinner("Analyse du stock..."):
+                    context_str = data.to_string()
+                    response = ask_ai(prompt, context_str)
+                    st.write(response)
+                    st.session_state.chat_hist.append(("assistant", response))
