@@ -23,11 +23,12 @@ def analyze_image_with_vision(image_bytes):
     Sois très strict."""
 
     try:
+        
         response = requests.post(
             "https://api.groq.com/openai/v1/chat/completions",
             headers={"Authorization": f"Bearer {GROQ_API_KEY}"},
             json={
-                "model": "llama-3.2-11b-vision-preview",
+                "model": "llama-3.2-11b-vision-instruct", # <-- CHANGEMENT ICI
                 "messages": [
                     {
                         "role": "user",
