@@ -197,7 +197,7 @@ def analyser_etiquette(image_bytes: bytes, mime_type: str = "image/jpeg") -> dic
 
     genai.configure(api_key=api_key)
     model = genai.GenerativeModel(
-        model_name="gemini-2.0-flash",            # gratuit, rapide, vision native
+        model_name="gemini-2.5-flash",            # free tier : 15 RPM, 1 500 req/jour
         generation_config=genai.GenerationConfig(
             temperature=0.1,                      # réponses précises et reproductibles
             max_output_tokens=1024,
