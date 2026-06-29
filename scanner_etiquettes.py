@@ -18,7 +18,7 @@ Intégrer dans App.py :
 """
 
 import streamlit as st
-import google.generativeai as gen-ai
+import google.generativeai as genai
 import json
 import pandas as pd
 import os
