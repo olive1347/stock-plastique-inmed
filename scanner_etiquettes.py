@@ -185,6 +185,36 @@ Schéma JSON :
 Réponds UNIQUEMENT avec l'objet JSON, sans Markdown, sans preamble."""
 
 
+def extraire_json(texte: str) -> dict:
+    """
+    Extrait robustement un objet JSON depuis une réponse texte,
+    même si le modèle a ajouté du texte autour ou a mal échappé des caractères.
+    """
+    import re
+
+    # 1. Retirer les blocs Markdown ```json ... ```
+    texte = re.sub(r"```(?:json)?", "", texte).strip()
+
+    # 2. Extraire le premier bloc {...} trouvé (tolérant aux textes parasites)
+    match = re.search(r"\{.*\}", texte, re.DOTALL)
+    if not match:
+        raise ValueError(f"Aucun objet JSON trouvé dans la réponse :\n{texte[:300]}")
+    candidat = match.group(0)
+
+    # 3. Tentative de parsing direct
+    try:
+        return json.loads(candidat)
+    except json.JSONDecodeError:
+        pass
+
+    # 4. Nettoyage des caractères de contrôle problématiques et retry
+    candidat_clean = re.sub(r'[\x00-\x1f\x7f]', ' ', candidat)
+    try:
+        return json.loads(candidat_clean)
+    except json.JSONDecodeError as e:
+        raise ValueError(f"JSON invalide même après nettoyage : {e}\n---\n{candidat[:500]}")
+
+
 def analyser_etiquette(image_bytes: bytes, mime_type: str = "image/jpeg") -> dict:
     """Envoie l'image à Gemini et retourne le JSON parsé."""
     api_key = st.secrets.get("GEMINI_API_KEY", os.environ.get("GEMINI_API_KEY", ""))
@@ -197,10 +227,10 @@ def analyser_etiquette(image_bytes: bytes, mime_type: str = "image/jpeg") -> dic
 
     genai.configure(api_key=api_key)
     model = genai.GenerativeModel(
-        model_name="gemini-2.5-flash",            # free tier : 15 RPM, 1 500 req/jour
+        model_name="gemini-2.5-flash",
         generation_config=genai.GenerationConfig(
-            temperature=0.1,                      # réponses précises et reproductibles
-            max_output_tokens=1024,
+            temperature=0.1,        # réponses précises et reproductibles
+            max_output_tokens=2048, # augmenté pour éviter la troncature du JSON
         ),
     )
 
@@ -210,9 +240,7 @@ def analyser_etiquette(image_bytes: bytes, mime_type: str = "image/jpeg") -> dic
     response = model.generate_content([PROMPT_VISION, pil_image])
     raw = response.text.strip()
 
-    # Retirer éventuels blocs ```json
-    raw = raw.replace("```json", "").replace("```", "").strip()
-    return json.loads(raw)
+    return extraire_json(raw)
 
 
 # ── Helpers UI ─────────────────────────────────────────────────────────────────
