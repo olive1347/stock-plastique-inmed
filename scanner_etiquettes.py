@@ -215,8 +215,16 @@ def extraire_json(texte: str) -> dict:
         raise ValueError(f"JSON invalide même après nettoyage : {e}\n---\n{candidat[:500]}")
 
 
-def analyser_etiquette(image_bytes: bytes, mime_type: str = "image/jpeg") -> dict:
-    """Envoie l'image à Gemini et retourne le JSON parsé."""
+def extraire_retry_delay(err_msg: str) -> int:
+    """Extrait le délai de retry depuis le message d'erreur Gemini (ex: 'retry in 22s')."""
+    import re
+    m = re.search(r"retry in (\d+(?:\.\d+)?)\s*s", str(err_msg), re.IGNORECASE)
+    return int(float(m.group(1))) + 2 if m else 30
+
+
+def analyser_etiquette(image_bytes: bytes, mime_type: str = "image/jpeg",
+                       status_placeholder=None) -> dict:
+    """Envoie l'image à Gemini avec retry automatique sur quota 429."""
     api_key = st.secrets.get("GEMINI_API_KEY", os.environ.get("GEMINI_API_KEY", ""))
     if not api_key:
         raise ValueError(
@@ -229,18 +237,38 @@ def analyser_etiquette(image_bytes: bytes, mime_type: str = "image/jpeg") -> dic
     model = genai.GenerativeModel(
         model_name="gemini-2.5-flash",
         generation_config=genai.GenerationConfig(
-            temperature=0.1,        # réponses précises et reproductibles
-            max_output_tokens=2048, # augmenté pour éviter la troncature du JSON
+            temperature=0.1,
+            max_output_tokens=2048,
         ),
     )
 
-    # Convertir bytes → PIL Image pour Gemini
     pil_image = Image.open(BytesIO(image_bytes))
 
-    response = model.generate_content([PROMPT_VISION, pil_image])
-    raw = response.text.strip()
+    MAX_RETRIES = 3
+    for attempt in range(MAX_RETRIES):
+        try:
+            response = model.generate_content([PROMPT_VISION, pil_image])
+            return extraire_json(response.text.strip())
 
-    return extraire_json(raw)
+        except Exception as e:
+            err = str(e)
+            is_quota = "429" in err or "quota" in err.lower() or "resource exhausted" in err.lower()
+
+            if is_quota and attempt < MAX_RETRIES - 1:
+                wait = extraire_retry_delay(err)
+                # Affichage du compte à rebours dans Streamlit
+                if status_placeholder:
+                    for remaining in range(wait, 0, -1):
+                        status_placeholder.warning(
+                            f"⏳ Quota atteint — nouvelle tentative dans **{remaining}s** "
+                            f"(essai {attempt + 1}/{MAX_RETRIES - 1})..."
+                        )
+                        import time; time.sleep(1)
+                    status_placeholder.info("🔄 Nouvelle tentative en cours…")
+                else:
+                    import time; time.sleep(wait)
+            else:
+                raise
 
 
 # ── Helpers UI ─────────────────────────────────────────────────────────────────
@@ -298,15 +326,19 @@ def tab_scanner():
         st.divider()
 
         if st.button("🔍 Analyser l'étiquette", type="primary", use_container_width=True):
-            with st.spinner("Analyse en cours avec Claude Vision…"):
+            status = st.empty()
+            with st.spinner("Analyse en cours avec Gemini Vision…"):
                 try:
-                    result = analyser_etiquette(img_bytes, mime)
+                    result = analyser_etiquette(img_bytes, mime, status_placeholder=status)
+                    status.empty()
                     st.session_state["last_result"] = result
                     st.session_state["last_img"] = img_bytes
                 except json.JSONDecodeError as e:
+                    status.empty()
                     st.error(f"Réponse inattendue du modèle : {e}")
                     return
                 except Exception as e:
+                    status.empty()
                     st.error(f"Erreur API : {e}")
                     return
 
