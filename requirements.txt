@@ -2,4 +2,5 @@ streamlit
 pandas
 openpyxl
 requests
-anthropic
+google-generativeai
+Pillow
