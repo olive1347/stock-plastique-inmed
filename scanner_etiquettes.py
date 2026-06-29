@@ -4,7 +4,7 @@ Intégrable dans l'app INMED multi-onglets ou en standalone.
 
 Dépendances dans requirements.txt :
     streamlit
-    google-generativeai
+    google-genai
     pandas
     pillow
     openpyxl
@@ -15,7 +15,8 @@ Ajouter dans Streamlit Cloud Secrets :
 """
 
 import streamlit as st
-import google.generativeai as genai
+from google import genai
+from google.genai import types
 import json
 import pandas as pd
 import os
@@ -188,4 +189,6 @@ def extraire_json(texte: str) -> dict:
     Extrait robustement un objet JSON depuis une réponse texte,
     même si le modèle a ajouté du texte autour ou a mal échappé des caractères.
     """
-    # 1. Retirer les blocs Markdown ```json ...
+    # 1. Retirer les blocs Markdown ```json ... ```
+    texte = re.sub(r"
+http://googleusercontent.com/immersive_entry_chip/0
