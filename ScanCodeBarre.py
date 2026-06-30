@@ -1,51 +1,46 @@
 import streamlit as st
 import streamlit.components.v1 as components
-import pandas as pd
-import os
 
-# Fichier de données
-FICHIER_DB = 'stock_labo.csv'
-if not os.path.exists(FICHIER_DB):
-    pd.DataFrame(columns=['CodeBarre', 'Nom', 'Ref']).to_csv(FICHIER_DB, index=False)
+st.title("Scanner Code-Barres Debug")
 
-st.set_page_config(page_title="Scanner Web", layout="centered")
-
-st.title("📷 Scanner Code-Barres")
-
-# Le code HTML/JS qui gère la caméra et le décodage
+# Composant HTML/JS amélioré
+# Ajout de logs pour voir si le navigateur détecte la caméra et le code
 scanner_html = """
-<div id="reader" style="width: 100%; border: 1px solid #ccc; border-radius: 8px;"></div>
-<div id="result" style="margin-top: 10px; font-weight: bold; color: green;"></div>
+<div id="reader" style="width: 300px; height: 250px;"></div>
+<div id="debug" style="margin-top:10px; color:red; font-size:12px;"></div>
 
 <script src="https://unpkg.com/html5-qrcode"></script>
 <script>
-    function onScanSuccess(decodedText, decodedResult) {
-        document.getElementById('result').innerText = "Code détecté : " + decodedText;
-        // Envoie le code vers Streamlit
+    const debug = document.getElementById('debug');
+    debug.innerText = "Initialisation...";
+
+    function onScanSuccess(decodedText) {
+        debug.innerText = "Succès : " + decodedText;
+        // Envoi au parent
         window.parent.postMessage({
             type: 'streamlit:setComponentValue',
             value: decodedText
         }, '*');
     }
-    
-    let html5QrcodeScanner = new Html5QrcodeScanner("reader", { fps: 10, qrbox: 250 });
-    html5QrcodeScanner.render(onScanSuccess);
+
+    function onScanFailure(error) {
+        // Ignorer les erreurs de scan continu
+    }
+
+    let html5QrcodeScanner = new Html5Qrcode("reader");
+    html5QrcodeScanner.start(
+        { facingMode: "environment" },
+        { fps: 10, qrbox: 250 },
+        onScanSuccess,
+        onScanFailure
+    ).catch(err => {
+        debug.innerText = "Erreur caméra : " + err;
+    });
 </script>
 """
 
-# Affichage du composant caméra
-components.html(scanner_html, height=450)
+# Affichage du composant
+components.html(scanner_html, height=400)
 
-# Récupération du résultat via un paramètre de session ou entrée
-# Note : Pour que cela soit fluide, on utilise une saisie cachée
-code = st.text_input("Code scanné (automatique) :", key="scanner_input")
-
-if code:
-    df = pd.read_csv(FICHIER_DB)
-    produit = df[df['CodeBarre'].astype(str) == code]
-    
-    if not produit.empty:
-        st.success("Produit trouvé :")
-        st.table(produit)
-    else:
-        st.warning("Produit inconnu.")
+st.write("Si vous voyez une erreur en rouge au-dessus, c'est la cause du problème.")
+st.info("Astuces : 1. Utilisez Chrome. 2. Vérifiez que l'URL est bien 'localhost' ou 'https'. 3. Vérifiez les permissions caméra du navigateur.")
