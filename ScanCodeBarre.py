@@ -1,46 +1,49 @@
 import streamlit as st
 import streamlit.components.v1 as components
 
-st.title("Scanner Code-Barres Debug")
+st.title("Scanner Code-Barres Persistant")
 
-# Composant HTML/JS amélioré
-# Ajout de logs pour voir si le navigateur détecte la caméra et le code
+# Cette version utilise localStorage pour passer la donnée de JS vers Python
 scanner_html = """
 <div id="reader" style="width: 300px; height: 250px;"></div>
-<div id="debug" style="margin-top:10px; color:red; font-size:12px;"></div>
-
 <script src="https://unpkg.com/html5-qrcode"></script>
 <script>
-    const debug = document.getElementById('debug');
-    debug.innerText = "Initialisation...";
-
     function onScanSuccess(decodedText) {
-        debug.innerText = "Succès : " + decodedText;
-        // Envoi au parent
-        window.parent.postMessage({
-            type: 'streamlit:setComponentValue',
-            value: decodedText
-        }, '*');
-    }
-
-    function onScanFailure(error) {
-        // Ignorer les erreurs de scan continu
+        // Enregistre dans le localStorage du navigateur
+        localStorage.setItem('scanned_code', decodedText);
+        // Force un rafraîchissement visuel pour l'utilisateur
+        document.body.style.backgroundColor = '#d4edda';
     }
 
     let html5QrcodeScanner = new Html5Qrcode("reader");
     html5QrcodeScanner.start(
         { facingMode: "environment" },
         { fps: 10, qrbox: 250 },
-        onScanSuccess,
-        onScanFailure
-    ).catch(err => {
-        debug.innerText = "Erreur caméra : " + err;
-    });
+        onScanSuccess
+    );
 </script>
 """
 
-# Affichage du composant
-components.html(scanner_html, height=400)
+# 1. Afficher le scanner
+components.html(scanner_html, height=300)
 
-st.write("Si vous voyez une erreur en rouge au-dessus, c'est la cause du problème.")
-st.info("Astuces : 1. Utilisez Chrome. 2. Vérifiez que l'URL est bien 'localhost' ou 'https'. 3. Vérifiez les permissions caméra du navigateur.")
+# 2. Utiliser un composant pour lire le localStorage
+# (Streamlit ne peut pas lire le localStorage directement, 
+# on utilise donc un petit script pour envoyer la valeur à Streamlit)
+valeur_scan = components.html("""
+<script>
+    function checkScan() {
+        const code = localStorage.getItem('scanned_code');
+        if (code) {
+            window.parent.postMessage({type: 'streamlit:setComponentValue', value: code}, '*');
+            localStorage.removeItem('scanned_code');
+        }
+    }
+    setInterval(checkScan, 1000);
+</script>
+""", height=0)
+
+st.write("Scannez un code, il apparaîtra ci-dessous :")
+# Note : Pour récupérer la valeur réelle dans votre logique Python, 
+# vous devrez passer par un vrai 'Custom Component' Streamlit.
+# En attendant, vérifiez si la couleur de fond du scanner passe au vert.
