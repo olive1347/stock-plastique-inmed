@@ -6,170 +6,63 @@ from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
 
 # --- CONFIGURATION ---
-SHEET_URL = "https://docs.google.com/spreadsheets/d/e/2PACX-1vT6j8ofGR_sogNbwOjGZaX3v7KsswlNiXcIjjDBA5p8gg8SDyUmXBOgr0lGGu3G9SDkqytF_GBCXNMb/pub?output=csv"
-MOT_DE_PASSE_GESTION = "INMED2026" 
-GROQ_API_KEY = st.secrets.get("GROQ_API_KEY", "")
+st.set_page_config(page_title="INMED Lab Stock", page_icon="🧪", layout="wide")
 
-@st.cache_data(ttl=60)
-def load_data(reload_trigger):
-    try:
-        df = pd.read_csv(SHEET_URL)
-        return df
-    except Exception as e:
-        return str(e)
+# CSS personnalisé pour un look plus moderne
+st.markdown("""
+    <style>
+    .stApp { background-color: #f8f9fa; }
+    .css-1r6slbo { padding-top: 1rem; }
+    .stButton>button { border-radius: 20px; border: none; background-color: #007bff; color: white; transition: 0.3s; }
+    .stButton>button:hover { background-color: #0056b3; }
+    div[data-testid="stMetricValue"] { font-size: 1.2rem; }
+    </style>
+""", unsafe_allow_html=True)
 
-# --- FONCTION D'INTERROGATION IA ---
-def ask_ai(question, context):
-    if not GROQ_API_KEY:
-        return "⚠️ La clé API Groq n'est pas configurée."
-    
-    prompt = f"""Tu es l'assistant du laboratoire INMED. Réponds aux questions sur le stock de plastique.
-    Contexte actuel du stock :
-    {context}
-    
-    Question de l'utilisateur : {question}
-    """
-    
-    try:
-        response = requests.post(
-            "https://api.groq.com/openai/v1/chat/completions",
-            headers={"Authorization": f"Bearer {GROQ_API_KEY}"},
-            json={
-                "model": "llama-3.1-8b-instant",
-                "messages": [{"role": "user", "content": prompt}],
-                "temperature": 0.5
-            },
-            timeout=10
-        )
-        return response.json()['choices'][0]['message']['content']
-    except Exception as e:
-        return f"Erreur IA : {str(e)}"
+# (Gardez vos fonctions load_data, ask_ai, send_basket_email telles quelles)
 
-# --- FONCTION D'ENVOI D'E-MAIL ---
-def send_basket_email(nom, basket):
-    destinataire = "olivier.lassalle@inserm.fr"
-    sender = st.secrets.get("INSERM_EMAIL", "olivier.lassalle@inserm.fr")
-    password = st.secrets.get("INSERM_PASSWORD", "")
-    
-    msg = MIMEMultipart()
-    msg['From'] = sender
-    msg['To'] = destinataire
-    msg['Subject'] = f"🧪 Nouvelle demande de matériel - {nom}"
-    
-    html_items = ""
-    for item in basket:
-        html_items += f"""
-        <li style="margin-bottom:10px;">
-            <b>{item['designation']}</b> (Réf: {item['ref_fab']})<br>
-            Quantité : {item['qty']} x (Cdt: {item['cond']})<br>
-            <small style="color:gray;">Info: {item['info']}</small>
-        </li>
-        """
-    
-    body = f"""
-    <h2>Nouvelle demande de matériel Plastique</h2>
-    <p><b>Demandeur :</b> {nom}</p>
-    <ul style="list-style-type:none; padding:0;">{html_items}</ul>
-    """
-    msg.attach(MIMEText(body, 'html'))
-    
-    try:
-        server = smtplib.SMTP("smtp.inserm.fr", 587)
-        server.starttls()
-        server.login(sender, password)
-        server.sendmail(sender, destinataire, msg.as_string())
-        server.quit()
-        return True
-    except Exception as e:
-        st.error(f"Erreur d'envoi : {e}")
-        return False
+# --- INTERFACE ---
+st.title("🧪 Portail de Gestion INMED")
+st.markdown("---")
 
-# --- INTERFACE PRINCIPALE ---
-st.set_page_config(page_title="Demande plastique - INMED", page_icon="🧪", layout="wide")
-st.title("🧪 Demande plastique - INMED")
+# Navigation latérale pour épurer l'interface principale
+with st.sidebar:
+    st.image("https://upload.wikimedia.org/wikipedia/fr/b/bd/Inserm_logo.svg", width=150)
+    st.title("Menu")
+    page = st.radio("Navigation", ["🛒 Commander", "🛠️ Inventaire", "🤖 FAQ IA"])
+    st.markdown("---")
+    st.info("Besoin d'aide ? Contactez l'administration.")
 
-if 'reload_key' not in st.session_state: st.session_state.reload_key = 0
-if 'auth_gest' not in st.session_state: st.session_state.auth_gest = False
-if 'basket' not in st.session_state: st.session_state.basket = []
+if page == "🛒 Commander":
+    st.header("🛒 Commander du matériel")
+    # Utilisation de colonnes pour un rendu plus aéré
+    col1, col2 = st.columns([1, 2])
+    with col1:
+        cat_select = st.selectbox("Catégorie", cats)
+    with col2:
+        search_query = st.text_input("🔍 Rechercher un article", placeholder="Tapez le nom du plastique...")
 
-data = load_data(st.session_state.reload_key)
+    # ... (Logique de filtrage et panier)
+    st.success(f"Panier actuel : {len(st.session_state.basket)} article(s)")
 
-if isinstance(data, str):
-    st.error(f"Erreur chargement : {data}")
-elif data.empty:
-    st.warning("Le fichier est vide.")
-else:
-    cats = ["Toutes"] + sorted(data['Catégorie'].dropna().unique().tolist())
-    tab_cmd, tab_gest, tab_faq = st.tabs(["🛒 Commander", "🛠️ Gestion Inventaire", "❓ FAQ IA"])
-
-    with tab_cmd:
-        st.subheader("Passer une commande")
-        cat_select = st.selectbox("1. Choisir une catégorie :", cats)
-        search_query = st.text_input("🔍 Rechercher un article :")
-        
-        filtered_df = data if cat_select == "Toutes" else data[data['Catégorie'] == cat_select]
-        if search_query:
-            filtered_df = filtered_df[filtered_df['Désignation'].str.contains(search_query, case=False, na=False)]
-        
-        if not filtered_df.empty:
-            selected_idx = st.selectbox(
-                "3. Choisir un article :", 
-                options=filtered_df.index, 
-                format_func=lambda i: f"{filtered_df.loc[i, 'Désignation']} — {filtered_df.loc[i, 'Informations']}"
-            )
-            item = data.loc[selected_idx]
-            qty = st.number_input("Quantité", min_value=1, value=1)
-            
-            if st.button("➕ Ajouter au panier"):
-                st.session_state.basket.append({
-                    'designation': item['Désignation'],
-                    'qty': qty,
-                    'cond': item.get('Conditionnement', 'N/A'),
-                    'info': item.get('Informations', 'N/A'),
-                    'ref_fab': item.get('Ref Fabricant', 'N/A')
-                })
-                st.rerun()
-        
-        st.divider()
-        st.subheader("🛒 Mon Panier")
-        if st.session_state.basket:
-            for idx, item in enumerate(st.session_state.basket):
-                col1, col2 = st.columns([4, 1])
-                col1.write(f"{item['qty']} x **{item['designation']}** <small>({item['cond']})</small>", unsafe_allow_html=True)
-                if col2.button("❌", key=f"del_{idx}"):
-                    st.session_state.basket.pop(idx)
-                    st.rerun()
-            
-            nom = st.text_input("Votre Nom")
-            if st.button("🚀 Envoyer la commande"):
-                if nom and send_basket_email(nom, st.session_state.basket):
-                    st.success("✅ Commande envoyée avec succès !")
-                    st.session_state.basket = []
-                    # Un petit délai visuel avant de vider pour que l'utilisateur voie le message
-                    st.balloons()
-                elif not nom:
-                    st.warning("Veuillez renseigner votre nom.")
-
-    with tab_gest:
-        st.subheader("🛠️ Gestion Inventaire")
-        if not st.session_state.auth_gest:
-            password = st.text_input("🔑 Mot de passe :", type="password")
-            if st.button("Valider"):
-                if password == MOT_DE_PASSE_GESTION:
+elif page == "🛠️ Inventaire":
+    st.header("🛠️ Gestion Inventaire")
+    if not st.session_state.auth_gest:
+        with st.form("login"):
+            pw = st.text_input("Mot de passe", type="password")
+            if st.form_submit_button("Connexion"):
+                if pw == MOT_DE_PASSE_GESTION:
                     st.session_state.auth_gest = True
                     st.rerun()
-        else:
-            if st.button("🔒 Se déconnecter"):
-                st.session_state.auth_gest = False
-                st.rerun()
-            st.dataframe(data, use_container_width=True)
-            if st.button("🔄 Rafraîchir les données"):
-                st.session_state.reload_key += 1
-                st.rerun()
+    else:
+        st.dataframe(data, use_container_width=True, hide_index=True)
 
-    with tab_faq:
-        if prompt := st.chat_input("Ex: Quel plastique pour 20-200µl ?"):
-            with st.chat_message("user"): st.write(prompt)
-            with st.chat_message("assistant"):
+elif page == "🤖 FAQ IA":
+    st.header("🤖 Assistant IA INMED")
+    st.chat_message("assistant").write("Bonjour ! Posez-moi vos questions sur le stock.")
+    if prompt := st.chat_input("Ex: quel est le stock de cônes 10µl ?"):
+        with st.chat_message("user"): st.write(prompt)
+        with st.chat_message("assistant"):
+            with st.spinner("Analyse en cours..."):
                 response = ask_ai(prompt, data.to_string())
                 st.write(response)
