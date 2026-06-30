@@ -4,3 +4,7 @@ openpyxl
 requests
 google-genai
 pillow
+streamlit-webrtc
+opencv-python
+pyzbar
+av
