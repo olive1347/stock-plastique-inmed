@@ -4,51 +4,49 @@ import av
 import cv2
 from pyzbar.pyzbar import decode
 
-# Configuration de la page
-st.set_page_config(page_title="Scanner QR Code", page_icon="📷")
+# Configuration de la page Streamlit
+st.set_page_config(page_title="Scanner de Code Barre", layout="centered")
 
-st.title("📷 Scanner QR Code en direct")
+st.title("📷 Scanner de codes-barres en direct")
 st.write("Autorisez l'accès à votre caméra pour commencer le scan.")
 
-# Définition du transformateur vidéo pour traiter les images de la caméra
-class QRScannerTransformer(VideoTransformerBase):
-    def __init__(self):
-        self.result = None
+# Création d'une variable d'état pour stocker le dernier code détecté
+if 'last_code' not in st.session_state:
+    st.session_state.last_code = ""
 
+class BarcodeTransformer(VideoTransformerBase):
     def recv(self, frame: av.VideoFrame) -> av.VideoFrame:
+        # Conversion du frame en format OpenCV (BGR)
         img = frame.to_ndarray(format="bgr24")
         
-        # Décodage du QR Code via pyzbar
-        barcodes = decode(img)
+        # Décodage des codes-barres
+        decoded_objects = decode(img)
         
-        for barcode in barcodes:
-            # Récupérer la valeur du QR Code
-            decoded_data = barcode.data.decode("utf-8")
-            self.result = decoded_data
+        for obj in decoded_objects:
+            # Récupération de la valeur du code
+            code_value = obj.data.decode('utf-8')
+            st.session_state.last_code = code_value
             
-            # Dessiner un rectangle autour du QR Code trouvé
-            (x, y, w, h) = barcode.rect
+            # Dessiner un rectangle autour du code détecté
+            (x, y, w, h) = obj.rect
             cv2.rectangle(img, (x, y), (x + w, y + h), (0, 255, 0), 2)
-            cv2.putText(img, decoded_data, (x, y - 10), 
-                        cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 0), 2)
-        
+            
         return av.VideoFrame.from_ndarray(img, format="bgr24")
 
-# Initialisation du flux WebRTC
-ctx = webrtc_streamer(
-    key="qr-scanner",
-    video_transformer_factory=QRScannerTransformer,
-    media_stream_constraints={"video": True, "audio": False},
-    async_processing=True,
+# Lancement du flux vidéo
+webrtc_streamer(
+    key="barcode-scanner",
+    video_transformer_factory=BarcodeTransformer,
+    rtc_configuration={
+        "iceServers": [{"urls": ["stun:stun.l.google.com:19302"]}]
+    }
 )
 
-# Affichage des résultats s'ils sont trouvés
-if ctx.video_transformer:
-    if ctx.video_transformer.result:
-        st.success(f"QR Code détecté : {ctx.video_transformer.result}")
-        # Optionnel : bouton pour réinitialiser
-        if st.button("Effacer le résultat"):
-            ctx.video_transformer.result = None
-            st.rerun()
+# Affichage du résultat détecté
+if st.session_state.last_code:
+    st.success(f"Dernier code scanné : {st.session_state.last_code}")
+else:
+    st.info("En attente de détection...")
 
-st.info("Astuce : Assurez-vous que votre navigateur autorise l'accès à la caméra pour ce site.")
+st.sidebar.markdown("### Instructions")
+st.sidebar.write("1. Cliquez sur 'Start'.\n2. Présentez un code-barres devant la caméra.\n3. Le code s'affichera en dessous.")
