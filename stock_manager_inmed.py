@@ -1,68 +1,61 @@
 import streamlit as st
 import pandas as pd
-import smtplib
 import requests
-from email.mime.multipart import MIMEMultipart
-from email.mime.text import MIMEText
 
 # --- CONFIGURATION ---
-st.set_page_config(page_title="INMED Lab Stock", page_icon="🧪", layout="wide")
+st.set_page_config(page_title="INMED Stock", page_icon="🧪", layout="wide")
+SHEET_URL = "https://docs.google.com/spreadsheets/d/e/2PACX-1vT6j8ofGR_sogNbwOjGZaX3v7KsswlNiXcIjjDBA5p8gg8SDyUmXBOgr0lGGu3G9SDkqytF_GBCXNMb/pub?output=csv"
+MOT_DE_PASSE_GESTION = "INMED2026"
 
-# CSS personnalisé pour un look plus moderne
-st.markdown("""
-    <style>
-    .stApp { background-color: #f8f9fa; }
-    .css-1r6slbo { padding-top: 1rem; }
-    .stButton>button { border-radius: 20px; border: none; background-color: #007bff; color: white; transition: 0.3s; }
-    .stButton>button:hover { background-color: #0056b3; }
-    div[data-testid="stMetricValue"] { font-size: 1.2rem; }
-    </style>
-""", unsafe_allow_html=True)
+# Chargement données
+@st.cache_data(ttl=300)
+def load_data():
+    return pd.read_csv(SHEET_URL)
 
-# (Gardez vos fonctions load_data, ask_ai, send_basket_email telles quelles)
+# Initialisation état
+if 'basket' not in st.session_state: st.session_state.basket = []
+if 'auth_gest' not in st.session_state: st.session_state.auth_gest = False
 
-# --- INTERFACE ---
-st.title("🧪 Portail de Gestion INMED")
-st.markdown("---")
+data = load_data()
+cats = ["Toutes"] + sorted(data['Catégorie'].dropna().unique().tolist())
 
-# Navigation latérale pour épurer l'interface principale
-with st.sidebar:
-    st.image("https://upload.wikimedia.org/wikipedia/fr/b/bd/Inserm_logo.svg", width=150)
-    st.title("Menu")
-    page = st.radio("Navigation", ["🛒 Commander", "🛠️ Inventaire", "🤖 FAQ IA"])
-    st.markdown("---")
-    st.info("Besoin d'aide ? Contactez l'administration.")
+# --- UI MODERNE ---
+st.title("🧪 Portail INMED")
+tab1, tab2, tab3 = st.tabs(["🛒 Commander", "🛠️ Gestion", "🤖 Assistant"])
 
-if page == "🛒 Commander":
-    st.header("🛒 Commander du matériel")
-    # Utilisation de colonnes pour un rendu plus aéré
-    col1, col2 = st.columns([1, 2])
-    with col1:
+with tab1:
+    col_a, col_b = st.columns([1, 2])
+    with col_a:
         cat_select = st.selectbox("Catégorie", cats)
-    with col2:
-        search_query = st.text_input("🔍 Rechercher un article", placeholder="Tapez le nom du plastique...")
+    with col_b:
+        query = st.text_input("🔍 Rechercher un produit")
 
-    # ... (Logique de filtrage et panier)
-    st.success(f"Panier actuel : {len(st.session_state.basket)} article(s)")
+    # Filtrage
+    filtered_df = data if cat_select == "Toutes" else data[data['Catégorie'] == cat_select]
+    if query:
+        filtered_df = filtered_df[filtered_df['Désignation'].str.contains(query, case=False, na=False)]
 
-elif page == "🛠️ Inventaire":
-    st.header("🛠️ Gestion Inventaire")
+    # Affichage produits
+    selected_idx = st.selectbox("Choisir l'article", filtered_df.index, format_func=lambda i: filtered_df.loc[i, 'Désignation'])
+    item = data.loc[selected_idx]
+    
+    if st.button("➕ Ajouter au panier"):
+        st.session_state.basket.append({'designation': item['Désignation'], 'qty': 1})
+        st.rerun()
+
+    st.write("### 🛒 Panier")
+    st.write(st.session_state.basket)
+
+with tab2:
     if not st.session_state.auth_gest:
-        with st.form("login"):
-            pw = st.text_input("Mot de passe", type="password")
-            if st.form_submit_button("Connexion"):
-                if pw == MOT_DE_PASSE_GESTION:
-                    st.session_state.auth_gest = True
-                    st.rerun()
+        if st.text_input("Mot de passe", type="password") == MOT_DE_PASSE_GESTION:
+            st.session_state.auth_gest = True
+            st.rerun()
     else:
-        st.dataframe(data, use_container_width=True, hide_index=True)
+        st.dataframe(data)
 
-elif page == "🤖 FAQ IA":
-    st.header("🤖 Assistant IA INMED")
-    st.chat_message("assistant").write("Bonjour ! Posez-moi vos questions sur le stock.")
-    if prompt := st.chat_input("Ex: quel est le stock de cônes 10µl ?"):
-        with st.chat_message("user"): st.write(prompt)
-        with st.chat_message("assistant"):
-            with st.spinner("Analyse en cours..."):
-                response = ask_ai(prompt, data.to_string())
-                st.write(response)
+with tab3:
+    st.info("Posez vos questions sur le stock ici.")
+    if prompt := st.chat_input("Question ?"):
+        st.chat_message("user").write(prompt)
+        st.chat_message("assistant").write("L'IA est prête (configurez votre clé Groq pour activer).")
