@@ -4,6 +4,7 @@ import smtplib
 import requests
 from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
+import unicodedata
 
 # --- CONFIGURATION DE LA PAGE ---
 st.set_page_config(
@@ -85,6 +86,15 @@ def load_data(reload_trigger):
     except Exception as e:
         return str(e)
 
+#def normalize_string(s):
+    """Supprime les accents et convertit en minuscules pour une recherche ultra-robuste."""
+    if not isinstance(s, str):
+        return ""
+    return "".join(
+        c for c in unicodedata.normalize('NFKD', s)
+        if not unicodedata.combining(c)
+    ).lower()
+
 # Initialisation de l'état de la session
 if 'reload_key' not in st.session_state: st.session_state.reload_key = 0
 if 'auth_gest' not in st.session_state: st.session_state.auth_gest = False
@@ -93,111 +103,19 @@ if 'chat_history' not in st.session_state: st.session_state.chat_history = []
 
 data = load_data(st.session_state.reload_key)
 
-def ask_ai(question, context):
-    if not GROQ_API_KEY:
-        return "⚠️ La clé API Groq n'est pas configurée dans les secrets Streamlit Cloud."
-    
-    prompt = f"""Tu es l'assistant IA officiel du laboratoire INMED. Réponds de façon précise, cordiale et synthétique en français.
-    Voici le catalogue actuel de notre stock de plastique de laboratoire :
-    {context}
-    
-    Question de l'utilisateur : {question}
-    """
-    
-    try:
-        response = requests.post(
-            "https://api.groq.com/openai/v1/chat/completions",
-            headers={"Authorization": f"Bearer {GROQ_API_KEY}"},
-            json={
-                "model": "llama-3.1-8b-instant",
-                "messages": [{"role": "user", "content": prompt}],
-                "temperature": 0.4
-            },
-            timeout=10
-        )
-        return response.json()['choices'][0]['message']['content']
-    except Exception as e:
-        return f"Erreur de communication avec l'assistant IA : {str(e)}"
-
-def send_basket_email(nom, basket):
-    destinataire = "olivier.lassalle@inserm.fr"
-    sender = st.secrets.get("INSERM_EMAIL", "olivier.lassalle@inserm.fr")
-    password = st.secrets.get("INSERM_PASSWORD", "")
-    
-    if not password:
-        st.error("❌ Mot de passe de messagerie (INSERM_PASSWORD) manquant dans vos secrets de configuration.")
-        return False
-
-    msg = MIMEMultipart()
-    msg['From'] = sender
-    msg['To'] = destinataire
-    msg['Subject'] = f"🧪 Nouvelle demande de matériel Plastique — {nom}"
-    
-    html_items = ""
-    for item in basket:
-        html_items += f"""
-        <tr style="border-bottom: 1px solid #e2e8f0;">
-            <td style="padding: 12px; font-weight: bold; color: #1e293b;">{item['designation']}</td>
-            <td style="padding: 12px; text-align: center;"><span style="background: #eff6ff; color: #1d4ed8; padding: 4px 10px; border-radius: 9999px; font-weight: bold;">{item['qty']}</span></td>
-            <td style="padding: 12px; color: #64748b;">{item['cond']}</td>
-            <td style="padding: 12px; color: #64748b;">{item['ref_fab']}</td>
-            <td style="padding: 12px; color: #94a3b8; font-size: 12px;">{item['info']}</td>
-        </tr>
-        """
-    
-    body = f"""
-    <html>
-    <body style="font-family: Arial, sans-serif; color: #334155; line-height: 1.6; max-width: 600px; margin: 0 auto; padding: 20px; border: 1px solid #e2e8f0; border-radius: 12px;">
-        <div style="background-color: #1e3a8a; padding: 20px; border-radius: 8px 8px 0 0; text-align: center; color: white;">
-            <h2 style="margin: 0; font-size: 22px;">🧪 Demande de Plastique</h2>
-            <p style="margin: 5px 0 0; opacity: 0.85;">Institut de Neurobiologie de la Méditerranée</p>
-        </div>
-        <div style="padding: 20px;">
-            <p>Bonjour,</p>
-            <p>Une nouvelle demande de matériel de laboratoire a été déposée par <strong>{nom}</strong>.</p>
-            
-            <h3 style="color: #1e3a8a; border-bottom: 2px solid #e2e8f0; padding-bottom: 8px; margin-top: 24px;">Liste des articles demandés :</h3>
-            <table style="width: 100%; border-collapse: collapse; margin-top: 10px;">
-                <thead>
-                    <tr style="background-color: #f8fafc; border-bottom: 2px solid #e2e8f0;">
-                        <th style="padding: 12px; text-align: left; color: #475569;">Article</th>
-                        <th style="padding: 12px; text-align: center; color: #475569;">Qté</th>
-                        <th style="padding: 12px; text-align: left; color: #475569;">Cond.</th>
-                        <th style="padding: 12px; text-align: left; color: #475569;">Réf Fab.</th>
-                        <th style="padding: 12px; text-align: left; color: #475569;">Remarques</th>
-                    </tr>
-                </thead>
-                <tbody>
-                    {html_items}
-                </tbody>
-            </table>
-            
-            <p style="margin-top: 30px; font-size: 11px; color: #94a3b8; text-align: center; border-top: 1px solid #e2e8f0; padding-top: 15px;">
-                Ce mail automatique a été généré par l'application Portail Plastique INMED.
-            </p>
-        </div>
-    </body>
-    </html>
-    """
-    msg.attach(MIMEText(body, 'html'))
-    
-    try:
-        server = smtplib.SMTP("smtp.inserm.fr", 587)
-        server.starttls()
-        server.login(sender, password)
-        server.sendmail(sender, destinataire, msg.as_string())
-        server.quit()
-        return True
-    except Exception as e:
-        st.error(f"Erreur d'envoi SMTP : {e}")
-        return False
-
 # --- RENDU DE L'INTERFACE UTILISATEUR ---
 if isinstance(data, str):
     st.error(f"❌ Impossible d'accéder aux données : {data}")
 elif data.empty:
     st.warning("⚠️ L'inventaire importé est vide.")
 else:
+    #    # Détection automatique des colonnes pour tolérer les variations d'accents du fichier Sheets
+    col_desig = next((c for c in data.columns if c.lower() in ["désignation", "designation"]), "Désignation")
+    col_cat = next((c for c in data.columns if c.lower() in ["catégorie", "categorie"]), "Catégorie")
+    col_cond = next((c for c in data.columns if c.lower() in ["conditionnement", "conditionement"]), "Conditionnement")
+    col_info = next((c for c in data.columns if c.lower() in ["informations", "information", "remarques"]), "Informations")
+    col_ref = next((c for c in data.columns if c.lower() in ["ref fabricant", "reference fabricant", "référence fabricant", "ref"]), "Ref Fabricant")
+
     # En-tête principal moderne
     st.markdown('<div class="main-title">🧪 Portail Plastique INMED</div>', unsafe_allow_html=True)
     st.markdown('<div class="subtitle">Commandes internes, gestion de l\'inventaire et assistant logistique</div>', unsafe_allow_html=True)
@@ -206,18 +124,21 @@ else:
     tab_cmd, tab_gest, tab_faq = st.tabs(["🛒 Commander", "🛠️ Gestion de l'Inventaire", "🤖 Assistant IA (FAQ)"])
 
     with tab_cmd:
-        col_select, col_search = st.columns([1, 2])
-        cats = ["Toutes"] + sorted(data['Catégorie'].dropna().unique().tolist())
+        #        col_select, col_search = st.columns([1, 2])
+        cats = ["Toutes"] + sorted(data[col_cat].dropna().unique().tolist())
         
         with col_select:
             cat_select = st.selectbox("📁 Filtrer par catégorie :", cats)
         with col_search:
             search_query = st.text_input("🔍 Rechercher un article par mot-clé :", placeholder="Ex : Flasque, Embout, Tube...")
 
-        # Application des filtres
-        filtered_df = data if cat_select == "Toutes" else data[data['Catégorie'] == cat_select]
+        # Application des filtres avec tolérance aux accents et à la casse
+        filtered_df = data if cat_select == "Toutes" else data[data[col_cat] == cat_select]
         if search_query:
-            filtered_df = filtered_df[filtered_df['Désignation'].str.contains(search_query, case=False, na=False)]
+            query_norm = normalize_string(search_query)
+            filtered_df = filtered_df[
+                filtered_df[col_desig].apply(lambda x: query_norm in normalize_string(str(x)))
+            ]
 
         if not filtered_df.empty:
             # Formulaire de choix et d'ajout
@@ -226,7 +147,7 @@ else:
             selected_idx = st.selectbox(
                 "Choisir le produit précis dans la liste :", 
                 options=filtered_df.index, 
-                format_func=lambda i: f"{filtered_df.loc[i, 'Désignation']} — Réf: {filtered_df.loc[i].get('Ref Fabricant', 'N/A')}"
+                format_func=lambda i: f"{filtered_df.loc[i, col_desig]} — Réf: {filtered_df.loc[i].get(col_ref, 'N/A')}"
             )
             
             selected_item = data.loc[selected_idx]
@@ -234,21 +155,21 @@ else:
             # Présentation propre des détails du produit sélectionné
             detail_col1, detail_col2 = st.columns(2)
             with detail_col1:
-                st.info(f"📦 **Conditionnement :** {selected_item.get('Conditionnement', 'Non spécifié')}")
+                st.info(f"📦 **Conditionnement :** {selected_item.get(col_cond, 'Non spécifié')}")
             with detail_col2:
-                st.warning(f"ℹ️ **Informations :** {selected_item.get('Informations', 'Aucune remarque')}")
+                st.warning(f"ℹ️ **Informations :** {selected_item.get(col_info, 'Aucune remarque')}")
 
             qty = st.number_input("Quantité souhaitée :", min_value=1, value=1, step=1)
             
             if st.button("➕ Ajouter l'article au panier", use_container_width=True):
                 st.session_state.basket.append({
-                    'designation': selected_item['Désignation'],
+                    'designation': selected_item[col_desig],
                     'qty': qty,
-                    'cond': selected_item.get('Conditionnement', 'N/A'),
-                    'info': selected_item.get('Informations', 'N/A'),
-                    'ref_fab': selected_item.get('Ref Fabricant', 'N/A')
+                    'cond': selected_item.get(col_cond, 'N/A'),
+                    'info': selected_item.get(col_info, 'N/A'),
+                    'ref_fab': selected_item.get(col_ref, 'N/A')
                 })
-                st.toast(f"✅ Ajouté : {selected_item['Désignation']} (x{qty})", icon="🛒")
+                st.toast(f"✅ Ajouté : {selected_item[col_desig]} (x{qty})", icon="🛒")
                 st.rerun()
         else:
             st.error("Aucun article ne correspond à vos critères de recherche.")
