@@ -235,10 +235,18 @@ else:
         if not filtered_df.empty:
             st.markdown("### 1. Sélectionner l'article et la quantité")
             
+            def format_item_with_info(i):
+                desig = filtered_df.loc[i, col_desig]
+                ref = filtered_df.loc[i].get(col_ref, 'N/A')
+                info = filtered_df.loc[i].get(col_info, '')
+                # S'assure que l'information est valide et non vide avant de l'ajouter
+                info_text = f" — [{info}]" if pd.notna(info) and str(info).strip() not in ["", "nan", "None", "N/A"] else ""
+                return f"{desig} — Réf: {ref}{info_text}"
+
             selected_idx = st.selectbox(
                 "Choisir le produit précis dans la liste :", 
                 options=filtered_df.index, 
-                format_func=lambda i: f"{filtered_df.loc[i, col_desig]} — Réf: {filtered_df.loc[i].get(col_ref, 'N/A')}"
+                format_func=format_item_with_info
             )
             
             selected_item = data.loc[selected_idx]
