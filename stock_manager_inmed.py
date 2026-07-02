@@ -4,6 +4,7 @@ import smtplib
 import requests
 import unicodedata
 import os
+import re
 from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
 
@@ -105,24 +106,55 @@ LOCAL_STOCK_FILE = "stock_physique_inmed.csv"
 MOT_DE_PASSE_GESTION = "INMED2026" 
 GROQ_API_KEY = st.secrets.get("GROQ_API_KEY", "")
 
+def parse_stock_value(val):
+    """Extrait le premier nombre d'une chaîne de caractères (ex: '50 boîtes' -> 50).
+    Retourne 0 si aucun chiffre n'est trouvé."""
+    if pd.isna(val):
+        return 0
+    val_str = str(val).strip()
+    try:
+        return int(float(val_str))
+    except ValueError:
+        pass
+    match = re.search(r'\d+', val_str)
+    if match:
+        return int(match.group())
+    return 0
+
+def update_stock_text(current_val, qty_to_subtract):
+    """Soustrait intelligemment une quantité d'un texte de stock en conservant le suffixe (ex: '50 boîtes' -> '45 boîtes')."""
+    if pd.isna(current_val):
+        return "0"
+    s = str(current_val).strip()
+    match = re.search(r'(\d+)(.*)', s)
+    if match:
+        num_part = int(match.group(1))
+        text_part = match.group(2)
+        new_num = max(0, num_part - qty_to_subtract)
+        return f"{new_num}{text_part}"
+    return s
+
 @st.cache_data(ttl=10)
 def load_data(reload_trigger):
     """Charge les données depuis le fichier CSV local ou l'initialise depuis Google Sheets."""
     if os.path.exists(LOCAL_STOCK_FILE):
         try:
-            return pd.read_csv(LOCAL_STOCK_FILE)
+            df = pd.read_csv(LOCAL_STOCK_FILE, dtype=str)
+            if "Stock" in df.columns:
+                df["Stock"] = df["Stock"].fillna("0").astype(str)
+            return df
         except Exception as e:
             st.error(f"Erreur de lecture du stock local : {e}")
             
     # Initialisation première fois ou si fichier supprimé
     try:
-        df = pd.read_csv(SHEET_URL)
-        # Détection d'une colonne de stock existante, ou création par défaut
+        df = pd.read_csv(SHEET_URL, dtype=str)
         col_stock = next((c for c in df.columns if c.lower() in ["stock", "quantite", "quantite en stock", "qté"]), None)
         if not col_stock:
-            df["Stock"] = 100  # On initialise par défaut à 100 unités si non spécifié
+            df["Stock"] = "100"  # On initialise par défaut sous forme de chaîne de caractères
         else:
             df = df.rename(columns={col_stock: "Stock"})
+            df["Stock"] = df["Stock"].fillna("0").astype(str)
         
         # Sauvegarde sur le disque local
         df.to_csv(LOCAL_STOCK_FILE, index=False)
@@ -281,9 +313,9 @@ else:
                 desig = filtered_df.loc[i, col_desig]
                 ref = filtered_df.loc[i].get(col_ref, 'N/A')
                 info = filtered_df.loc[i].get(col_info, '')
-                stock = int(filtered_df.loc[i].get("Stock", 0))
+                stock_val = str(filtered_df.loc[i].get("Stock", "0")).strip()
                 info_text = f" — [{info}]" if pd.notna(info) and str(info).strip() not in ["", "nan", "None", "N/A"] else ""
-                return f"{desig} — Réf: {ref} (En stock : {stock} u.){info_text}"
+                return f"{desig} — Réf: {ref} (En stock : {stock_val}){info_text}"
 
             selected_idx = st.selectbox(
                 "Choisir le produit précis dans la liste :", 
@@ -292,28 +324,33 @@ else:
             )
             
             selected_item = data.loc[selected_idx]
-            current_stock = int(selected_item.get("Stock", 0))
+            stock_text = str(selected_item.get("Stock", "0")).strip()
+            numeric_stock = parse_stock_value(stock_text)
             
-            # Présentation des détails avec badges de stock
             detail_col1, detail_col2, detail_col3 = st.columns(3)
             with detail_col1:
                 st.info(f"📦 **Conditionnement :** {selected_item.get(col_cond, 'Non spécifié')}")
             with detail_col2:
                 st.warning(f"ℹ️ **Informations :** {selected_item.get(col_info, 'Aucune remarque')}")
             with detail_col3:
-                if current_stock > 15:
-                    st.markdown(f'<div class="stock-badge-ok">🟢 Stock suffisant : {current_stock} unités</div>', unsafe_allow_html=True)
-                elif current_stock > 0:
-                    st.markdown(f'<div class="stock-badge-low">⚠️ Stock critique : {current_stock} unités restantes</div>', unsafe_allow_html=True)
+                if numeric_stock > 15:
+                    st.markdown(f'<div class="stock-badge-ok">🟢 Stock suffisant : {stock_text}</div>', unsafe_allow_html=True)
+                elif numeric_stock > 0:
+                    st.markdown(f'<div class="stock-badge-low">⚠️ Stock critique : {stock_text}</div>', unsafe_allow_html=True)
                 else:
-                    st.markdown(f'<div class="stock-badge-none">🔴 En rupture de stock : {current_stock} unités</div>', unsafe_allow_html=True)
+                    if stock_text.lower() in ["rupture", "vide", "0", "aucun", "none", "nan", ""]:
+                        st.markdown(f'<div class="stock-badge-none">🔴 En rupture de stock : {stock_text if stock_text else "0"}</div>', unsafe_allow_html=True)
+                    else:
+                        st.markdown(f'<div class="stock-badge-none">ℹ️ État : {stock_text}</div>', unsafe_allow_html=True)
 
             qty = st.number_input("Quantité prélevée :", min_value=1, value=1, step=1)
             
             if st.button("➕ Ajouter l'article au panier", use_container_width=True):
-                # Vérification de sécurité du stock
-                if qty > current_stock:
-                    st.error(f"❌ Impossible d'ajouter : le stock physique disponible n'est que de {current_stock} unités.")
+                # Vérification de sécurité du stock (uniquement si le stock est basé sur un nombre)
+                if numeric_stock > 0 and qty > numeric_stock:
+                    st.error(f"❌ Impossible d'ajouter : le stock physique disponible n'est que de {stock_text}.")
+                elif numeric_stock == 0 and stock_text.lower() in ["rupture", "vide", "0", "aucun", "none", "nan", ""]:
+                    st.error(f"❌ Impossible d'ajouter : cet article est actuellement indisponible.")
                 else:
                     # Ajout temporaire au panier
                     st.session_state.basket.append({
@@ -369,11 +406,12 @@ else:
                     if nom_demandeur.strip():
                         with st.spinner("Mise à jour en cours de l'inventaire numérique et envoi du courriel..."):
                             if send_basket_email(nom_demandeur.strip(), st.session_state.basket):
-                                # Déduction effective des stocks physiques
+                                # Déduction effective des stocks physiques (avec support du format texte)
                                 for b_item in st.session_state.basket:
                                     idx_to_update = b_item['index']
                                     qty_deducted = b_item['qty']
-                                    data.at[idx_to_update, 'Stock'] = max(0, int(data.at[idx_to_update, 'Stock']) - qty_deducted)
+                                    current_val = data.at[idx_to_update, 'Stock']
+                                    data.at[idx_to_update, 'Stock'] = update_stock_text(current_val, qty_deducted)
                                 
                                 # Enregistrement des données mises à jour
                                 save_local_data(data)
@@ -404,7 +442,7 @@ else:
             col_admin_title, col_admin_logout = st.columns([5, 1])
             with col_admin_title:
                 st.markdown("✅ **Session Administrateur active**")
-                st.markdown("Double-cliquez directement sur la colonne **'Stock'** du tableau ci-dessous pour ajuster manuellement les quantités physiques.")
+                st.markdown("Double-cliquez directement sur la colonne **'Stock'** du tableau ci-dessous pour ajuster manuellement les quantités physiques (ex: '20 u.', 'En commande', etc.).")
             with col_admin_logout:
                 if st.button("🔒 Déconnexion", use_container_width=True):
                     st.session_state.auth_gest = False
