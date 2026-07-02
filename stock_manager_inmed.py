@@ -391,7 +391,7 @@ else:
         st.subheader("🛠️ Espace d'administration du stock")
         
         if not st.session_state.auth_gest:
-            with St_form := st.form("auth_form"):
+            with st.form("auth_form"):
                 passwd = st.text_input("Saisissez le code d'accès administrateur :", type="password")
                 if st.form_submit_button("Se connecter"):
                     if passwd == MOT_DE_PASSE_GESTION:
